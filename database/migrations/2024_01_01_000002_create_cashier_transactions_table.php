@@ -28,7 +28,7 @@ return new class extends Migration
             $table->timestamps();
 
             $table->index(['payable_type', 'payable_id']);
-            $table->index(['processor_name', 'processor_transaction_id']);
+            $table->index(['processor_name', 'processor_transaction_id'], 'cashier_transactions_processor_idx');
             $table->index(['status']);
             $table->index(['currency']);
             $table->index(['processed_at']);
