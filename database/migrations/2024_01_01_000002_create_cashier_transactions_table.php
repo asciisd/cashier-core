@@ -14,7 +14,7 @@ return new class extends Migration
             $table->string('processor_transaction_id');
             $table->string('payable_type');
             $table->foreignId('payable_id')->constrained('users', 'id');
-            $table->foreignId('payment_method_id');
+            $table->uuid('payment_method_id')->nullable();
             $table->unsignedBigInteger('amount'); // Amount in cents
             $table->string('currency', 3);
             $table->string('status');
