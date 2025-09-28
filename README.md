@@ -1,5 +1,9 @@
 # Cashier Core
 
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/asciisd/cashier-core.svg?style=flat-square)](https://packagist.org/packages/asciisd/cashier-core)
+[![Total Downloads](https://img.shields.io/packagist/dt/asciisd/cashier-core.svg?style=flat-square)](https://packagist.org/packages/asciisd/cashier-core)
+[![License](https://img.shields.io/packagist/l/asciisd/cashier-core.svg?style=flat-square)](https://packagist.org/packages/asciisd/cashier-core)
+
 A flexible payment processing system for Laravel using the Factory Pattern. This package provides a unified interface for multiple payment processors, making it easy to add new payment gateways without changing your application code.
 
 ## Features
