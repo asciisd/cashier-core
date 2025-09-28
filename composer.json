@@ -1,6 +1,7 @@
 {
     "name": "asciisd/cashier-core",
     "description": "A flexible payment processing system for Laravel using Factory Pattern",
+    "version": "1.0.0",
     "type": "library",
     "license": "MIT",
     "keywords": [
@@ -47,7 +48,10 @@
         }
     },
     "config": {
-        "sort-packages": true
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
     },
     "minimum-stability": "dev",
     "prefer-stable": true,

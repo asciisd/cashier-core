@@ -10,7 +10,7 @@ A flexible payment processing system for Laravel using the Factory Pattern. This
 - **Database Models**: Built-in models for transactions, payments, and payment methods
 - **Configurable**: Flexible configuration system
 - **Testable**: Comprehensive test suite included
-- **Multiple Processors**: Support for Stripe, PayPal, and custom processors
+- **Multiple Processors**: Support for custom processors
 - **Refund Support**: Full and partial refunds
 - **Authorization & Capture**: Pre-authorization and later capture
 - **Payment Methods**: Store and manage customer payment methods
@@ -46,16 +46,6 @@ Add the following environment variables to your `.env` file:
 ```env
 # Default processor
 CASHIER_DEFAULT_PROCESSOR=stripe
-
-# Stripe Configuration
-STRIPE_SECRET_KEY=sk_test_your_stripe_secret_key
-STRIPE_PUBLIC_KEY=pk_test_your_stripe_public_key
-STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret
-
-# PayPal Configuration
-PAYPAL_CLIENT_ID=your_paypal_client_id
-PAYPAL_CLIENT_SECRET=your_paypal_client_secret
-PAYPAL_MODE=sandbox
 
 # General Settings
 CASHIER_CURRENCY=USD
@@ -94,15 +84,9 @@ if ($result->isSuccessful()) {
 ### Working with Different Processors
 
 ```php
-// Stripe
-$stripeProcessor = PaymentFactory::create('stripe');
-
-// PayPal
-$paypalProcessor = PaymentFactory::create('paypal');
-
 // Check available processors
 $processors = PaymentFactory::getProcessorNames();
-// Returns: ['stripe', 'paypal']
+// Returns: []
 ```
 
 ### Refund Processing
@@ -347,9 +331,6 @@ The package provides extensive configuration options. See the published config f
 
 ### Built-in Processors
 
-- **Stripe**: Full feature support including webhooks, recurring payments
-- **PayPal**: Basic payment processing with authorization/capture
-
 ### Extensible Architecture
 
 The Factory Pattern makes it easy to add new processors:
@@ -388,4 +369,4 @@ The MIT License (MIT). Please see [License File](LICENSE.md) for more informatio
 
 ## Support
 
-For support, please open an issue on GitHub or contact us at info@asciisd.com.
+For support, please open an issue on GitHub or contact us at <info@asciisd.com>.

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Asciisd\CashierCore\Abstracts;
 
 use Asciisd\CashierCore\Contracts\PaymentProcessorInterface;
+use Asciisd\CashierCore\DataObjects\PaymentMethodSnapshot;
 use Asciisd\CashierCore\DataObjects\PaymentResult;
 use Asciisd\CashierCore\DataObjects\RefundResult;
 use Asciisd\CashierCore\Enums\PaymentStatus;
@@ -94,7 +95,8 @@ abstract class AbstractPaymentProcessor implements PaymentProcessorInterface
         int $amount,
         string $currency,
         ?string $message = null,
-        ?array $metadata = null
+        ?array $metadata = null,
+        ?PaymentMethodSnapshot $paymentMethodSnapshot = null
     ): PaymentResult {
         return new PaymentResult(
             success: true,
@@ -103,7 +105,8 @@ abstract class AbstractPaymentProcessor implements PaymentProcessorInterface
             amount: $amount,
             currency: $currency,
             message: $message,
-            metadata: $metadata
+            metadata: $metadata,
+            paymentMethodSnapshot: $paymentMethodSnapshot
         );
     }
 
@@ -113,7 +116,8 @@ abstract class AbstractPaymentProcessor implements PaymentProcessorInterface
         string $currency,
         string $message,
         ?string $errorCode = null,
-        ?array $metadata = null
+        ?array $metadata = null,
+        ?PaymentMethodSnapshot $paymentMethodSnapshot = null
     ): PaymentResult {
         return new PaymentResult(
             success: false,
@@ -123,7 +127,8 @@ abstract class AbstractPaymentProcessor implements PaymentProcessorInterface
             currency: $currency,
             message: $message,
             metadata: $metadata,
-            errorCode: $errorCode
+            errorCode: $errorCode,
+            paymentMethodSnapshot: $paymentMethodSnapshot
         );
     }
 }

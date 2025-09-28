@@ -17,14 +17,13 @@ use Asciisd\CashierCore\Enums\PaymentStatus;
 // Example 1: Basic Payment Processing
 function processBasicPayment()
 {
-    // Create a Stripe processor
-    $processor = PaymentFactory::create('stripe');
+    // Create a payment processor (replace 'custom' with your processor)
+    $processor = PaymentFactory::create('custom');
 
     // Process a payment
     $result = $processor->charge([
         'amount' => 2000, // $20.00 in cents
         'currency' => 'USD',
-        'source' => 'tok_visa', // Stripe test token
         'description' => 'Order #12345',
         'metadata' => [
             'order_id' => '12345',
@@ -37,7 +36,7 @@ function processBasicPayment()
         
         // Save to database
         Transaction::create([
-            'processor_name' => 'stripe',
+            'processor_name' => 'custom',
             'processor_transaction_id' => $result->transactionId,
             'payable_type' => 'App\\Models\\User',
             'payable_id' => 'user-uuid-here',
@@ -53,26 +52,10 @@ function processBasicPayment()
     }
 }
 
-// Example 2: Processing with PayPal
-function processPayPalPayment()
-{
-    $processor = PaymentFactory::create('paypal');
-
-    $result = $processor->charge([
-        'amount' => 1500, // $15.00 in cents
-        'currency' => 'USD',
-        'description' => 'Subscription payment',
-    ]);
-
-    if ($result->isSuccessful()) {
-        echo "PayPal payment successful! Transaction ID: {$result->transactionId}\n";
-    }
-}
-
-// Example 3: Refund Processing
+// Example 2: Refund Processing
 function processRefund(string $transactionId)
 {
-    $processor = PaymentFactory::create('stripe');
+    $processor = PaymentFactory::create('custom');
 
     // Full refund
     $refundResult = $processor->refund($transactionId);
@@ -89,10 +72,10 @@ function processRefund(string $transactionId)
     }
 }
 
-// Example 4: Authorization and Capture
+// Example 3: Authorization and Capture
 function authorizeAndCapture()
 {
-    $processor = PaymentFactory::create('stripe');
+    $processor = PaymentFactory::create('custom');
 
     // Authorize payment
     $authResult = $processor->authorize([
@@ -114,14 +97,14 @@ function authorizeAndCapture()
     }
 }
 
-// Example 5: Working with Payment Methods
+// Example 4: Working with Payment Methods
 function managePaymentMethods()
 {
     // Create a payment method record
     $paymentMethod = PaymentMethod::create([
         'user_type' => 'App\\Models\\User',
         'user_id' => 'user-uuid-here',
-        'processor_name' => 'stripe',
+        'processor_name' => 'custom',
         'processor_payment_method_id' => 'pm_1234567890',
         'type' => 'credit_card',
         'brand' => 'visa',
@@ -141,32 +124,11 @@ function managePaymentMethods()
     }
 }
 
-// Example 6: Using Multiple Processors
-function demonstrateMultipleProcessors()
-{
-    $processors = ['stripe', 'paypal'];
-
-    foreach ($processors as $processorName) {
-        if (PaymentFactory::hasProcessor($processorName)) {
-            $processor = PaymentFactory::create($processorName);
-            echo "Using {$processor->getName()} processor\n";
-
-            // Check supported features
-            if ($processor->supports('recurring')) {
-                echo "- Supports recurring payments\n";
-            }
-            if ($processor->supports('webhooks')) {
-                echo "- Supports webhooks\n";
-            }
-        }
-    }
-}
-
-// Example 7: Error Handling
+// Example 5: Error Handling
 function handlePaymentErrors()
 {
     try {
-        $processor = PaymentFactory::create('stripe');
+        $processor = PaymentFactory::create('custom');
 
         $result = $processor->charge([
             'amount' => 100,
@@ -186,7 +148,7 @@ function handlePaymentErrors()
     }
 }
 
-// Example 8: Custom Processor Registration
+// Example 6: Custom Processor Registration
 function registerCustomProcessor()
 {
     // Register a custom processor at runtime
@@ -198,7 +160,7 @@ function registerCustomProcessor()
     }
 }
 
-// Example 9: Working with Transactions
+// Example 7: Working with Transactions
 function queryTransactions()
 {
     // Get all successful transactions
@@ -206,8 +168,8 @@ function queryTransactions()
     echo "Found {$successfulTransactions->count()} successful transactions\n";
 
     // Get transactions by processor
-    $stripeTransactions = Transaction::byProcessor('stripe')->get();
-    echo "Found {$stripeTransactions->count()} Stripe transactions\n";
+    $customTransactions = Transaction::byProcessor('custom')->get();
+    echo "Found {$customTransactions->count()} custom processor transactions\n";
 
     // Get transactions by amount
     $highValueTransactions = Transaction::byAmount(10000)->get(); // $100.00+

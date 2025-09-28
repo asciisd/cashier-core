@@ -18,6 +18,7 @@ readonly class PaymentResult
         public ?array $metadata = null,
         public ?string $processorResponse = null,
         public ?string $errorCode = null,
+        public ?PaymentMethodSnapshot $paymentMethodSnapshot = null,
     ) {}
 
     public function isSuccessful(): bool
@@ -32,7 +33,7 @@ readonly class PaymentResult
 
     public function toArray(): array
     {
-        return [
+        $result = [
             'success' => $this->success,
             'transaction_id' => $this->transactionId,
             'status' => $this->status->value,
@@ -43,5 +44,11 @@ readonly class PaymentResult
             'processor_response' => $this->processorResponse,
             'error_code' => $this->errorCode,
         ];
+
+        if ($this->paymentMethodSnapshot) {
+            $result = array_merge($result, $this->paymentMethodSnapshot->toArray());
+        }
+
+        return $result;
     }
 }

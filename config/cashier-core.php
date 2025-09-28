@@ -24,27 +24,7 @@ return [
     |
     */
     'processors' => [
-        'stripe' => [
-            'class' => \Asciisd\CashierCore\Processors\StripeProcessor::class,
-            'config' => [
-                'secret_key' => env('STRIPE_SECRET_KEY'),
-                'public_key' => env('STRIPE_PUBLIC_KEY'),
-                'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
-                'currency' => env('CASHIER_CURRENCY', 'USD'),
-            ],
-        ],
 
-        'paypal' => [
-            'class' => \Asciisd\CashierCore\Processors\PayPalProcessor::class,
-            'config' => [
-                'client_id' => env('PAYPAL_CLIENT_ID'),
-                'client_secret' => env('PAYPAL_CLIENT_SECRET'),
-                'mode' => env('PAYPAL_MODE', 'sandbox'), // sandbox or live
-                'currency' => env('CASHIER_CURRENCY', 'USD'),
-                'return_url' => env('PAYPAL_RETURN_URL', '/payment/success'),
-                'cancel_url' => env('PAYPAL_CANCEL_URL', '/payment/cancel'),
-            ],
-        ],
 
         // Add more processors here as needed
         // 'square' => [

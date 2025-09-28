@@ -14,7 +14,10 @@ return new class extends Migration
             $table->string('processor_transaction_id');
             $table->string('payable_type');
             $table->foreignId('payable_id')->constrained('users', 'id');
-            $table->uuid('payment_method_id')->nullable();
+            $table->string('payment_method_type')->nullable(); // e.g., 'credit_card', 'bank_transfer'
+            $table->string('payment_method_brand')->nullable(); // e.g., 'Visa', 'Mastercard', 'Fawry', 'Binance Pay'
+            $table->string('payment_method_last_four')->nullable(); // Last 4 digits for cards
+            $table->string('payment_method_display_name')->nullable(); // Human readable name
             $table->unsignedBigInteger('amount'); // Amount in cents
             $table->string('currency', 3);
             $table->string('status');
@@ -33,11 +36,8 @@ return new class extends Migration
             $table->index(['currency']);
             $table->index(['processed_at']);
             $table->index(['created_at']);
-
-            $table->foreign('payment_method_id')
-                  ->references('id')
-                  ->on('cashier_payment_methods')
-                  ->onDelete('set null');
+            $table->index(['payment_method_type']);
+            $table->index(['payment_method_brand']);
         });
     }
 

@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 namespace Asciisd\CashierCore\Models;
 
+use Asciisd\CashierCore\Enums\PaymentMethodBrand;
+use Asciisd\CashierCore\Enums\PaymentMethodType;
 use Asciisd\CashierCore\Enums\PaymentStatus;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-
 class Transaction extends Model
 {
     use HasFactory, HasUuids;
@@ -22,7 +23,10 @@ class Transaction extends Model
         'processor_transaction_id',
         'payable_type',
         'payable_id',
-        'payment_method_id',
+        'payment_method_type',
+        'payment_method_brand',
+        'payment_method_last_four',
+        'payment_method_display_name',
         'amount',
         'currency',
         'status',
@@ -40,6 +44,8 @@ class Transaction extends Model
         return [
             'amount' => 'integer',
             'status' => PaymentStatus::class,
+            'payment_method_type' => PaymentMethodType::class,
+            'payment_method_brand' => PaymentMethodBrand::class,
             'metadata' => 'array',
             'processor_response' => 'array',
             'processed_at' => 'datetime',
@@ -52,9 +58,24 @@ class Transaction extends Model
         return $this->morphTo();
     }
 
-    public function paymentMethod(): BelongsTo
+    public function getPaymentMethodDisplayAttribute(): string
     {
-        return $this->belongsTo(PaymentMethod::class);
+        if ($this->payment_method_display_name) {
+            return $this->payment_method_display_name;
+        }
+
+        $brand = $this->payment_method_brand?->label() ?? 'Unknown';
+        
+        if ($this->payment_method_last_four) {
+            return "{$brand} •••• {$this->payment_method_last_four}";
+        }
+
+        return $brand;
+    }
+
+    public function hasCardDetails(): bool
+    {
+        return $this->payment_method_brand?->requiresLastFour() && !empty($this->payment_method_last_four);
     }
 
     public function refunds(): HasMany
@@ -135,5 +156,31 @@ class Transaction extends Model
     public function scopeByCurrency($query, string $currency)
     {
         return $query->where('currency', $currency);
+    }
+
+    public function scopeByPaymentMethodType($query, PaymentMethodType $type)
+    {
+        return $query->where('payment_method_type', $type);
+    }
+
+    public function scopeByPaymentMethodBrand($query, PaymentMethodBrand $brand)
+    {
+        return $query->where('payment_method_brand', $brand);
+    }
+
+    public function scopeCardPayments($query)
+    {
+        return $query->where('payment_method_type', PaymentMethodType::CreditCard)
+                    ->orWhere('payment_method_type', PaymentMethodType::DebitCard);
+    }
+
+    public function scopeDigitalWalletPayments($query)
+    {
+        return $query->where('payment_method_type', PaymentMethodType::DigitalWallet);
+    }
+
+    public function scopeCryptocurrencyPayments($query)
+    {
+        return $query->where('payment_method_type', PaymentMethodType::Cryptocurrency);
     }
 }
