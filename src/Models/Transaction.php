@@ -39,6 +39,10 @@ class Transaction extends Model
         'failed_at',
     ];
 
+    protected $hidden = [
+        'processor_response',
+    ];
+
     protected function casts(): array
     {
         return [
