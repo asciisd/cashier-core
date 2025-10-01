@@ -18,7 +18,7 @@ return new class extends Migration
             $table->string('payment_method_brand')->nullable(); // e.g., 'Visa', 'Mastercard', 'Fawry', 'Binance Pay'
             $table->string('payment_method_last_four')->nullable(); // Last 4 digits for cards
             $table->string('payment_method_display_name')->nullable(); // Human readable name
-            $table->unsignedBigInteger('amount'); // Amount in cents
+            $table->unsignedBigInteger('amount'); // Payment amount
             $table->string('currency', 3);
             $table->string('status');
             $table->text('description')->nullable();

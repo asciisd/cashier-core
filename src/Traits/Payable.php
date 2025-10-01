@@ -57,7 +57,7 @@ trait Payable
 
     public function getFormattedTotalSpent(): string
     {
-        return number_format($this->getTotalSpent() / 100, 2);
+        return number_format($this->getTotalSpent(), 2);
     }
 
     public function getTransactionCount(): int

@@ -22,7 +22,7 @@ function processBasicPayment()
 
     // Process a payment
     $result = $processor->charge([
-        'amount' => 2000, // $20.00 in cents
+        'amount' => 20, // $20.00
         'currency' => 'USD',
         'description' => 'Order #12345',
         'metadata' => [

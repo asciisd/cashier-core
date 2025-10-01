@@ -82,12 +82,12 @@ abstract class AbstractPaymentProcessor implements PaymentProcessorInterface
 
     protected function formatAmount(int $amount): float
     {
-        return $amount / 100;
+        return $amount;
     }
 
     protected function parseAmount(float $amount): int
     {
-        return (int) ($amount * 100);
+        return (int) $amount;
     }
 
     protected function createSuccessResult(

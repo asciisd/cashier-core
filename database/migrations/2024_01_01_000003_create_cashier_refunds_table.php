@@ -12,7 +12,7 @@ return new class extends Migration
             $table->uuid('id')->primary();
             $table->uuid('transaction_id');
             $table->string('processor_refund_id');
-            $table->unsignedBigInteger('amount'); // Amount in cents
+            $table->unsignedBigInteger('amount'); // Refund amount
             $table->string('currency', 3);
             $table->string('status');
             $table->string('reason')->nullable();

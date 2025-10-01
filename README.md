@@ -68,7 +68,7 @@ $processor = PaymentFactory::create('stripe');
 
 // Process a payment
 $result = $processor->charge([
-    'amount' => 2000, // $20.00 in cents
+    'amount' => 20, // $20.00
     'currency' => 'USD',
     'source' => 'tok_visa',
     'description' => 'Order #12345',
@@ -157,7 +157,7 @@ $transactions = $user->transactions;
 $successful = $user->getSuccessfulTransactions();
 
 // Get total amount spent
-$totalSpent = $user->getTotalSpent(); // Returns amount in cents
+$totalSpent = $user->getTotalSpent(); // Returns total amount
 $formattedTotal = $user->getFormattedTotalSpent(); // Returns formatted string
 
 // Payment methods
