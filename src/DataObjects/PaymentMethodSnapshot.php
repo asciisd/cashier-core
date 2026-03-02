@@ -28,7 +28,7 @@ readonly class PaymentMethodSnapshot
 
     public static function fromCardData(string $brand, string $lastFour, ?string $displayName = null): self
     {
-        $brandEnum = PaymentMethodBrand::from(strtolower($brand));
+        $brandEnum = PaymentMethodBrand::tryFrom(strtolower($brand)) ?? PaymentMethodBrand::Other;
         
         return new self(
             type: $brandEnum->getType(),
@@ -40,7 +40,7 @@ readonly class PaymentMethodSnapshot
 
     public static function fromDigitalWallet(string $brand, ?string $displayName = null): self
     {
-        $brandEnum = PaymentMethodBrand::from(strtolower($brand));
+        $brandEnum = PaymentMethodBrand::tryFrom(strtolower($brand)) ?? PaymentMethodBrand::Other;
         
         return new self(
             type: $brandEnum->getType(),
@@ -52,7 +52,7 @@ readonly class PaymentMethodSnapshot
 
     public static function fromBankTransfer(string $method = 'wire_transfer', ?string $displayName = null): self
     {
-        $brandEnum = PaymentMethodBrand::from($method);
+        $brandEnum = PaymentMethodBrand::tryFrom($method) ?? PaymentMethodBrand::Other;
         
         return new self(
             type: $brandEnum->getType(),
@@ -64,7 +64,7 @@ readonly class PaymentMethodSnapshot
 
     public static function fromCryptocurrency(string $currency, ?string $displayName = null): self
     {
-        $brandEnum = PaymentMethodBrand::from(strtolower($currency));
+        $brandEnum = PaymentMethodBrand::tryFrom(strtolower($currency)) ?? PaymentMethodBrand::Other;
         
         return new self(
             type: $brandEnum->getType(),

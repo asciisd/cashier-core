@@ -16,19 +16,30 @@ readonly class PaymentResult
         public string $currency,
         public ?string $message = null,
         public ?array $metadata = null,
-        public ?string $processorResponse = null,
+        public mixed $processorResponse = null,
         public ?string $errorCode = null,
         public ?PaymentMethodSnapshot $paymentMethodSnapshot = null,
     ) {}
 
     public function isSuccessful(): bool
     {
-        return $this->success;
+        return $this->success && $this->status === PaymentStatus::Succeeded;
     }
 
     public function isFailed(): bool
     {
         return !$this->success;
+    }
+
+    public function requiresAction(): bool
+    {
+        return $this->status->requiresAction()
+            || (isset($this->metadata['redirect_url']) && !empty($this->metadata['redirect_url']));
+    }
+
+    public function getRedirectUrl(): ?string
+    {
+        return $this->metadata['redirect_url'] ?? null;
     }
 
     public function toArray(): array

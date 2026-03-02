@@ -8,6 +8,7 @@ use Asciisd\CashierCore\Contracts\PaymentProcessorInterface;
 use Asciisd\CashierCore\DataObjects\PaymentMethodSnapshot;
 use Asciisd\CashierCore\DataObjects\PaymentResult;
 use Asciisd\CashierCore\DataObjects\RefundResult;
+use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
 use Asciisd\CashierCore\Enums\PaymentStatus;
 use Asciisd\CashierCore\Exceptions\InvalidPaymentDataException;
 use Illuminate\Support\Facades\Validator;
@@ -41,6 +42,11 @@ abstract class AbstractPaymentProcessor implements PaymentProcessorInterface
         throw new \BadMethodCallException('Void method not implemented for ' . $this->getName());
     }
 
+    public function retrieve(string $transactionId): ?PaymentResult
+    {
+        throw new \BadMethodCallException('Retrieve method not implemented for ' . $this->getName());
+    }
+
     public function getPaymentStatus(string $transactionId): string
     {
         throw new \BadMethodCallException('Get payment status method not implemented for ' . $this->getName());
@@ -59,6 +65,16 @@ abstract class AbstractPaymentProcessor implements PaymentProcessorInterface
         }
 
         return $validator->validated();
+    }
+
+    public function parseWebhook(array $payload): TransactionWebhookUpdate
+    {
+        throw new \BadMethodCallException('Parse webhook not implemented for ' . $this->getName());
+    }
+
+    public function verifyWebhookSignature(array $payload, string $signature): bool
+    {
+        return false;
     }
 
     public function supports(string $feature): bool

@@ -6,6 +6,7 @@ namespace Asciisd\CashierCore\Contracts;
 
 use Asciisd\CashierCore\DataObjects\PaymentResult;
 use Asciisd\CashierCore\DataObjects\RefundResult;
+use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
 
 interface PaymentProcessorInterface
 {
@@ -35,6 +36,11 @@ interface PaymentProcessorInterface
     public function void(string $transactionId): PaymentResult;
 
     /**
+     * Retrieve transaction details from the payment provider
+     */
+    public function retrieve(string $transactionId): ?PaymentResult;
+
+    /**
      * Get payment status
      */
     public function getPaymentStatus(string $transactionId): string;
@@ -43,6 +49,16 @@ interface PaymentProcessorInterface
      * Validate payment data
      */
     public function validatePaymentData(array $data): array;
+
+    /**
+     * Parse and validate incoming webhook data
+     */
+    public function parseWebhook(array $payload): TransactionWebhookUpdate;
+
+    /**
+     * Verify webhook signature authenticity
+     */
+    public function verifyWebhookSignature(array $payload, string $signature): bool;
 
     /**
      * Get processor name
