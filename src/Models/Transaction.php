@@ -4,187 +4,196 @@ declare(strict_types=1);
 
 namespace Asciisd\CashierCore\Models;
 
-use Asciisd\CashierCore\Enums\PaymentMethodBrand;
-use Asciisd\CashierCore\Enums\PaymentMethodType;
 use Asciisd\CashierCore\Enums\PaymentStatus;
-use Illuminate\Database\Eloquent\Concerns\HasUuids;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Asciisd\CashierCore\Enums\SettlementMode;
+use Asciisd\CashierCore\Enums\TransactionType;
+use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Str;
+
+/**
+ * Base transaction model for the payment engine.
+ *
+ * Host applications extend this with their own concerns (user scoping, CRM
+ * sync, admin panel traits) and point `cashier-core.models.transaction` at the
+ * subclass. The engine reads and writes only the columns in the package
+ * migration stub; anything else belongs to the host.
+ *
+ * `provider` is deliberately a plain string here — hosts may cast it to their
+ * own display enum in the subclass. `mt5_ticket_number` keeps its historical
+ * name; read it as "ledger ticket".
+ */
 class Transaction extends Model
 {
-    use HasFactory, HasUuids;
+    use HasUlids;
+    use SoftDeletes;
 
-    protected $table = 'cashier_transactions';
+    public const SHORT_REFERENCE_LENGTH = 8;
 
     protected $fillable = [
-        'processor_name',
-        'processor_transaction_id',
-        'payable_type',
-        'payable_id',
-        'payment_method_type',
-        'payment_method_brand',
-        'payment_method_last_four',
-        'payment_method_display_name',
-        'amount',
-        'currency',
-        'status',
-        'description',
-        'metadata',
-        'processor_response',
-        'error_code',
-        'error_message',
-        'processed_at',
-        'failed_at',
+        'user_id', 'trading_account_id', 'transfer_transaction_id',
+        'provider', 'connection', 'provider_transaction_id', 'payment_processor', 'type', 'is_ftd', 'status',
+        'amount', 'currency', 'conversion_rate', 'fees', 'vendor_fees', 'fixed_vendor_fees',
+        'charged_amount', 'requested_amount', 'settled_amount',
+        'psp_fee_amount', 'markup_amount', 'settlement_mode',
+        'description', 'metadata', 'provider_payload',
+        'withdrawal_method', 'withdrawal_details', 'withdrawal_reason',
+        'payment_method_type', 'payment_method_brand', 'payment_method_last_four', 'payment_method_display_name',
+        'deposit_proof_path', 'mt5_ticket_number', 'executed_at',
+        'error_code', 'error_message', 'processed_at', 'failed_at',
     ];
 
     protected $hidden = [
-        'processor_response',
+        'provider_payload',
     ];
 
+    public function getTable(): string
+    {
+        return $this->table ?? config('cashier-core.database.tables.transactions', 'transactions');
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function uniqueIds(): array
+    {
+        return ['reference'];
+    }
+
+    public function getRouteKeyName(): string
+    {
+        return 'reference';
+    }
+
+    /**
+     * @return array<string, string>
+     */
     protected function casts(): array
     {
         return [
-            'amount' => 'integer',
             'status' => PaymentStatus::class,
-            'payment_method_type' => PaymentMethodType::class,
-            'payment_method_brand' => PaymentMethodBrand::class,
+            'type' => TransactionType::class,
+            'settlement_mode' => SettlementMode::class,
+            'is_ftd' => 'boolean',
+            'amount' => 'decimal:2',
+            'conversion_rate' => 'decimal:8',
+            'fees' => 'decimal:2',
+            'vendor_fees' => 'decimal:2',
+            'fixed_vendor_fees' => 'decimal:2',
+            'charged_amount' => 'decimal:2',
+            'requested_amount' => 'decimal:2',
+            'settled_amount' => 'decimal:2',
+            'psp_fee_amount' => 'decimal:2',
+            'markup_amount' => 'decimal:2',
             'metadata' => 'array',
-            'processor_response' => 'array',
+            'provider_payload' => $this->encryptedCast('encrypt_provider_payload'),
+            'withdrawal_details' => $this->encryptedCast('encrypt_withdrawal_details'),
+            'executed_at' => 'datetime',
             'processed_at' => 'datetime',
             'failed_at' => 'datetime',
         ];
     }
 
-    public function payable(): BelongsTo
+    /**
+     * Global scopes the webhook/sync pipeline may bypass when correlating a
+     * transaction without an authenticated user (host tenant scopes, team
+     * scopes). NEVER include SoftDeletes here — a deleted transaction must not
+     * change status or move funds.
+     *
+     * @return list<class-string|string>
+     */
+    public static function cashierBypassedScopes(): array
     {
-        return $this->morphTo();
+        return [];
     }
 
-    public function getPaymentMethodDisplayAttribute(): string
+    public function shortReference(): string
     {
-        if ($this->payment_method_display_name) {
-            return $this->payment_method_display_name;
+        return Str::upper(mb_substr((string) $this->reference, -self::SHORT_REFERENCE_LENGTH));
+    }
+
+    /**
+     * The standardized ledger comment for this transaction.
+     *
+     * For transfers, pass the counterpart account to produce "transfer from/to
+     * {account}". Deposits auto-detect first-time (FTD) vs subsequent (DEP).
+     * Capped at 32 characters (MT5's comment limit — the historical baseline).
+     */
+    public function mt5Comment(?int $counterpartLogin = null): string
+    {
+        if ($this->type->isTransfer() && $counterpartLogin) {
+            return mb_substr("{$this->type->mt5Prefix()} {$counterpartLogin}", 0, 32);
         }
 
-        $brand = $this->payment_method_brand?->label() ?? 'Unknown';
-        
-        if ($this->payment_method_last_four) {
-            return "{$brand} •••• {$this->payment_method_last_four}";
+        $prefix = $this->isFirstDeposit() ? 'FTD' : $this->type->mt5Prefix();
+
+        return mb_substr("{$prefix} #{$this->reference}", 0, 32);
+    }
+
+    public function mt5CancelComment(): string
+    {
+        return mb_substr("CXL #{$this->reference}", 0, 32);
+    }
+
+    public function isCancelable(): bool
+    {
+        return $this->type === TransactionType::Withdrawal
+            && in_array($this->status, [PaymentStatus::Pending, PaymentStatus::Processing], true);
+    }
+
+    /**
+     * Determine if this is the customer's first successful deposit.
+     */
+    public function isFirstDeposit(): bool
+    {
+        if ($this->type !== TransactionType::Deposit) {
+            return false;
         }
 
-        return $brand;
+        return ! static::query()
+            ->withoutGlobalScopes(static::cashierBypassedScopes())
+            ->where('user_id', $this->user_id)
+            ->where('type', TransactionType::Deposit)
+            ->where('status', PaymentStatus::Succeeded)
+            ->where('id', '!=', $this->id)
+            ->exists();
     }
 
-    public function hasCardDetails(): bool
+    public function hasFeeSnapshot(): bool
     {
-        return $this->payment_method_brand?->requiresLastFour() && !empty($this->payment_method_last_four);
+        return $this->psp_fee_amount !== null || $this->markup_amount !== null;
     }
 
-    public function refunds(): HasMany
+    public function hasPaymentMethodSnapshot(): bool
     {
-        return $this->hasMany(Refund::class);
-    }
-
-    public function isSuccessful(): bool
-    {
-        return $this->status === PaymentStatus::Succeeded;
-    }
-
-    public function isFailed(): bool
-    {
-        return $this->status === PaymentStatus::Failed;
+        return $this->payment_method_type !== null
+            || $this->payment_method_brand !== null
+            || $this->payment_method_last_four !== null
+            || $this->payment_method_display_name !== null;
     }
 
     public function isPending(): bool
     {
-        return $this->status === PaymentStatus::Pending;
+        return $this->status->isPending();
     }
 
     public function isProcessing(): bool
     {
-        return $this->status === PaymentStatus::Processing;
+        return $this->status->isProcessing();
     }
 
-    public function requiresAction(): bool
+    public function isCanceled(): bool
     {
-        return $this->status->requiresAction();
+        return $this->status->isCanceled();
     }
 
-    public function getFormattedAmountAttribute(): string
+    /**
+     * `array` or `encrypted:array` per the security config — encryption at
+     * rest for payloads that may carry PSP-supplied PII (PCI DSS 3.4/3.5).
+     */
+    private function encryptedCast(string $flag): string
     {
-        return number_format($this->amount, 2);
-    }
-
-    public function getTotalRefundedAttribute(): int
-    {
-        return $this->refunds()->where('status', 'succeeded')->sum('amount');
-    }
-
-    public function getRemainingRefundableAmountAttribute(): int
-    {
-        return $this->amount - $this->total_refunded;
-    }
-
-    public function canBeRefunded(): bool
-    {
-        return $this->isSuccessful() && $this->remaining_refundable_amount > 0;
-    }
-
-    public function scopeSuccessful($query)
-    {
-        return $query->where('status', PaymentStatus::Succeeded);
-    }
-
-    public function scopeFailed($query)
-    {
-        return $query->where('status', PaymentStatus::Failed);
-    }
-
-    public function scopePending($query)
-    {
-        return $query->where('status', PaymentStatus::Pending);
-    }
-
-    public function scopeByProcessor($query, string $processor)
-    {
-        return $query->where('processor_name', $processor);
-    }
-
-    public function scopeByAmount($query, int $amount)
-    {
-        return $query->where('amount', $amount);
-    }
-
-    public function scopeByCurrency($query, string $currency)
-    {
-        return $query->where('currency', $currency);
-    }
-
-    public function scopeByPaymentMethodType($query, PaymentMethodType $type)
-    {
-        return $query->where('payment_method_type', $type);
-    }
-
-    public function scopeByPaymentMethodBrand($query, PaymentMethodBrand $brand)
-    {
-        return $query->where('payment_method_brand', $brand);
-    }
-
-    public function scopeCardPayments($query)
-    {
-        return $query->where('payment_method_type', PaymentMethodType::CreditCard)
-                    ->orWhere('payment_method_type', PaymentMethodType::DebitCard);
-    }
-
-    public function scopeDigitalWalletPayments($query)
-    {
-        return $query->where('payment_method_type', PaymentMethodType::DigitalWallet);
-    }
-
-    public function scopeCryptocurrencyPayments($query)
-    {
-        return $query->where('payment_method_type', PaymentMethodType::Cryptocurrency);
+        return config("cashier-core.security.{$flag}", true) ? 'encrypted:array' : 'array';
     }
 }

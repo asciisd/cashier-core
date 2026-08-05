@@ -11,6 +11,14 @@ enum PaymentStatus: string
     case Succeeded = 'succeeded';
     case Failed = 'failed';
     case Canceled = 'canceled';
+
+    /**
+     * A webhook reported success but its amount or currency deviated from the
+     * invoice beyond tolerance. Held for human review: no ledger credit, no
+     * invoice mail, until resolved via sync or an audited resolution.
+     */
+    case OnHold = 'on_hold';
+
     case RequiresAction = 'requires_action';
     case RequiresCapture = 'requires_capture';
     case RequiresConfirmation = 'requires_confirmation';
@@ -24,11 +32,17 @@ enum PaymentStatus: string
             self::Succeeded => 'Succeeded',
             self::Failed => 'Failed',
             self::Canceled => 'Canceled',
+            self::OnHold => 'On Hold',
             self::RequiresAction => 'Requires Action',
             self::RequiresCapture => 'Requires Capture',
             self::RequiresConfirmation => 'Requires Confirmation',
             self::RequiresPaymentMethod => 'Requires Payment Method',
         };
+    }
+
+    public function isOnHold(): bool
+    {
+        return $this === self::OnHold;
     }
 
     public function isCompleted(): bool

@@ -5,11 +5,34 @@ declare(strict_types=1);
 namespace Asciisd\CashierCore;
 
 use Asciisd\CashierCore\Connections\ConnectionRegistry;
+use Asciisd\CashierCore\Contracts\FundsLedger;
 use Asciisd\CashierCore\Registry\PaymentProviderRegistry;
+use Asciisd\CashierCore\Support\NullLedger;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 
 class CashierCoreServiceProvider extends ServiceProvider
 {
+    /**
+     * Bundled driver classes, merged under host-declared entries so a host
+     * (or plugin) mapping wins over the default.
+     *
+     * @var array<string, class-string>
+     */
+    private const BUNDLED_DRIVERS = [
+        'aps' => Drivers\Aps\ApsProvider::class,
+        'jenapay' => Drivers\Jenapay\JenapayProvider::class,
+        'heropayment' => Drivers\Heropayment\HeropaymentProvider::class,
+        'payport' => Drivers\Payport\PayportProvider::class,
+        'sticpay' => Drivers\Sticpay\SticpayProvider::class,
+        'manual' => Drivers\Internal\ManualProvider::class,
+        'bank_transfer' => Drivers\Internal\BankTransferProvider::class,
+        'crypto' => Drivers\Internal\CryptoProvider::class,
+    ];
+
     public function register(): void
     {
         $this->mergeConfigFrom(
@@ -17,7 +40,27 @@ class CashierCoreServiceProvider extends ServiceProvider
             'cashier-core'
         );
 
+        config([
+            'cashier-core.drivers' => array_merge(
+                self::BUNDLED_DRIVERS,
+                (array) config('cashier-core.drivers', []),
+            ),
+        ]);
+
         $this->registerConnectionRegistry();
+        $this->registerLedger();
+    }
+
+    /**
+     * Hosts bind their real ledger before this provider registers (or after —
+     * the guard only fills the gap). The NullLedger default refuses every
+     * movement loudly instead of pretending funds moved.
+     */
+    protected function registerLedger(): void
+    {
+        if (! $this->app->bound(FundsLedger::class)) {
+            $this->app->singleton(FundsLedger::class, NullLedger::class);
+        }
     }
 
     public function boot(): void
@@ -25,6 +68,45 @@ class CashierCoreServiceProvider extends ServiceProvider
         $this->publishConfiguration();
         $this->loadMigrations();
         $this->registerCommands();
+        $this->registerRateLimiter();
+        $this->registerRoutes();
+    }
+
+    /**
+     * The package's webhook endpoints. The group supplies prefix, middleware
+     * and name prefix from config so the routes file itself stays bare — a
+     * host reshaping the group reshapes every endpoint at once. Disable with
+     * `cashier-core.routes.enabled` or Cashier::ignoreRoutes() to register
+     * your own.
+     */
+    protected function registerRoutes(): void
+    {
+        if (! Cashier::$registersRoutes || ! config('cashier-core.routes.enabled', true)) {
+            return;
+        }
+
+        Route::group([
+            'prefix' => config('cashier-core.routes.prefix', 'api/webhooks'),
+            'as' => config('cashier-core.routes.name_prefix', 'cashier.webhooks.'),
+            'middleware' => config('cashier-core.routes.middleware', ['api']),
+        ], function () {
+            $this->loadRoutesFrom(__DIR__.'/../routes/webhooks.php');
+        });
+    }
+
+    /**
+     * A default limiter behind the `throttle:cashier-webhooks` middleware in
+     * the default route group. A host that defines its own limiter under the
+     * same name before this provider boots keeps its own.
+     */
+    protected function registerRateLimiter(): void
+    {
+        if (RateLimiter::limiter('cashier-webhooks') === null) {
+            RateLimiter::for(
+                'cashier-webhooks',
+                fn (Request $request) => Limit::perMinute(120)->by($request->ip())
+            );
+        }
     }
 
     /**

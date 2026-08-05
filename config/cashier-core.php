@@ -185,8 +185,9 @@ return [
         'redact_keys' => [
             'email', 'zip', 'zip_code', 'postal_code', 'ip', 'client_ip',
             'card*', 'pan', 'cvv', 'phone', 'address*', 'account_number',
-            'account_info', 'iban', 'beneficiary_name', 'full_name',
-            'customer_name', 'customer_email', 'registered_email',
+            'account_info', 'payment_info', 'iban', 'beneficiary_name',
+            'full_name', 'customer_name', 'customer_email',
+            'registered_email', 'merchant_email',
         ],
         'allowed_redirect_hosts' => [],
         'retention' => [
