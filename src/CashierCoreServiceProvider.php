@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Asciisd\CashierCore;
 
-use Asciisd\CashierCore\Contracts\PaymentFactoryInterface;
-use Asciisd\CashierCore\Factory\PaymentFactory;
+use Asciisd\CashierCore\Connections\ConnectionRegistry;
+use Asciisd\CashierCore\Registry\PaymentProviderRegistry;
 use Illuminate\Support\ServiceProvider;
 
 class CashierCoreServiceProvider extends ServiceProvider
@@ -13,12 +13,11 @@ class CashierCoreServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->mergeConfigFrom(
-            __DIR__ . '/../config/cashier-core.php',
+            __DIR__.'/../config/cashier-core.php',
             'cashier-core'
         );
 
-        $this->registerPaymentFactory();
-        $this->registerPaymentProcessors();
+        $this->registerConnectionRegistry();
     }
 
     public function boot(): void
@@ -28,50 +27,41 @@ class CashierCoreServiceProvider extends ServiceProvider
         $this->registerCommands();
     }
 
-    protected function registerPaymentFactory(): void
+    /**
+     * One resolution path for providers. The deprecated 1.x class name stays
+     * resolvable (as a subclass) so existing injection sites survive the
+     * upgrade unchanged.
+     */
+    protected function registerConnectionRegistry(): void
     {
-        $this->app->singleton(PaymentFactoryInterface::class, function ($app) {
-            return new PaymentFactory($app);
-        });
+        if (! $this->app->bound(ConnectionRegistry::class)) {
+            $this->app->singleton(ConnectionRegistry::class);
+        }
 
-        $this->app->alias(PaymentFactoryInterface::class, 'cashier.factory');
-    }
+        if (! $this->app->bound(PaymentProviderRegistry::class)) {
+            $this->app->singleton(PaymentProviderRegistry::class);
+        }
 
-    protected function registerPaymentProcessors(): void
-    {
-        $this->app->afterResolving(PaymentFactoryInterface::class, function (PaymentFactoryInterface $factory) {
-            $processors = config('cashier-core.processors', []);
-
-            foreach ($processors as $name => $config) {
-                if (isset($config['class'])) {
-                    $factory->register($name, $config['class']);
-                    
-                    // Bind the processor with its configuration
-                    $this->app->when($config['class'])
-                              ->needs('$config')
-                              ->give($config['config'] ?? []);
-                }
-            }
-        });
+        $this->app->alias(ConnectionRegistry::class, 'cashier.connections');
     }
 
     protected function publishConfiguration(): void
     {
         if ($this->app->runningInConsole()) {
             $this->publishes([
-                __DIR__ . '/../config/cashier-core.php' => config_path('cashier-core.php'),
-            ], 'config');
+                __DIR__.'/../config/cashier-core.php' => config_path('cashier-core.php'),
+            ], 'cashier-core-config');
 
             $this->publishes([
-                __DIR__ . '/../database/migrations' => database_path('migrations'),
-            ], 'migrations');
+                __DIR__.'/../database/migrations' => database_path('migrations'),
+            ], 'cashier-core-migrations');
         }
     }
 
     protected function loadMigrations(): void
     {
-        if ($this->app->runningInConsole()) {
-            $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
+        if ($this->app->runningInConsole() && Cashier::$runsMigrations) {
+            $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
         }
     }
 
@@ -79,7 +69,7 @@ class CashierCoreServiceProvider extends ServiceProvider
     {
         if ($this->app->runningInConsole()) {
             $this->commands([
-                // Add Artisan commands here if needed
+                // cashier:install / cashier:check / cashier:publish / cashier:purge
             ]);
         }
     }
@@ -87,8 +77,9 @@ class CashierCoreServiceProvider extends ServiceProvider
     public function provides(): array
     {
         return [
-            PaymentFactoryInterface::class,
-            'cashier.factory',
+            ConnectionRegistry::class,
+            PaymentProviderRegistry::class,
+            'cashier.connections',
         ];
     }
 }
