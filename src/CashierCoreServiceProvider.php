@@ -6,8 +6,10 @@ namespace Asciisd\CashierCore;
 
 use Asciisd\CashierCore\Connections\ConnectionRegistry;
 use Asciisd\CashierCore\Contracts\FundsLedger;
+use Asciisd\CashierCore\Contracts\ResolvesFundingAccount;
 use Asciisd\CashierCore\Registry\PaymentProviderRegistry;
 use Asciisd\CashierCore\Support\NullLedger;
+use Asciisd\CashierCore\Support\PassthroughFundingAccountResolver;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -49,6 +51,18 @@ class CashierCoreServiceProvider extends ServiceProvider
 
         $this->registerConnectionRegistry();
         $this->registerLedger();
+        $this->registerFundingAccountResolver();
+    }
+
+    /**
+     * The default resolver honors an explicit `trading_account_login` and
+     * nothing else; hosts that deposit by account reference bind their own.
+     */
+    protected function registerFundingAccountResolver(): void
+    {
+        if (! $this->app->bound(ResolvesFundingAccount::class)) {
+            $this->app->singleton(ResolvesFundingAccount::class, PassthroughFundingAccountResolver::class);
+        }
     }
 
     /**

@@ -17,7 +17,7 @@ class PaymentLogger
 
     // --- PaymentService ---
 
-    public static function paymentProcessedSuccessfully(int $userId, ?string $transactionId, int $amount, string $provider): void
+    public static function paymentProcessedSuccessfully(int|string $userId, ?string $transactionId, int $amount, string $provider): void
     {
         self::channel()->info('Payment processed successfully', [
             'user_id' => $userId,
@@ -27,7 +27,7 @@ class PaymentLogger
         ]);
     }
 
-    public static function hostedPaymentPageCreated(int $userId, ?string $transactionId, int $amount, string $provider, ?string $redirectUrl): void
+    public static function hostedPaymentPageCreated(int|string $userId, ?string $transactionId, int $amount, string $provider, ?string $redirectUrl): void
     {
         self::channel()->info('Hosted payment page created', [
             'user_id' => $userId,
@@ -38,7 +38,7 @@ class PaymentLogger
         ]);
     }
 
-    public static function pendingPaymentCreated(int $userId, ?string $transactionId, int $amount, string $provider): void
+    public static function pendingPaymentCreated(int|string $userId, ?string $transactionId, int $amount, string $provider): void
     {
         self::channel()->info('Pending payment created (awaiting manual confirmation)', [
             'user_id' => $userId,
@@ -48,7 +48,7 @@ class PaymentLogger
         ]);
     }
 
-    public static function paymentFailed(int $userId, string $provider, ?string $error): void
+    public static function paymentFailed(int|string $userId, string $provider, ?string $error): void
     {
         self::channel()->warning('Payment failed', [
             'user_id' => $userId,
@@ -57,7 +57,7 @@ class PaymentLogger
         ]);
     }
 
-    public static function invalidPaymentData(int $userId, string $provider, string $error, array $data): void
+    public static function invalidPaymentData(int|string $userId, string $provider, string $error, array $data): void
     {
         self::channel()->error('Invalid payment data', [
             'user_id' => $userId,
@@ -67,7 +67,7 @@ class PaymentLogger
         ]);
     }
 
-    public static function paymentProcessingFailed(int $userId, string $provider, string $error): void
+    public static function paymentProcessingFailed(int|string $userId, string $provider, string $error): void
     {
         self::channel()->error('Payment processing failed', [
             'user_id' => $userId,
