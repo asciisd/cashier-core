@@ -165,7 +165,10 @@ class CashierCoreServiceProvider extends ServiceProvider
     {
         if ($this->app->runningInConsole()) {
             $this->commands([
-                // cashier:install / cashier:check / cashier:publish / cashier:purge
+                Console\InstallCommand::class,
+                Console\CheckCommand::class,
+                Console\PublishCommand::class,
+                Console\PurgeCommand::class,
             ]);
         }
     }

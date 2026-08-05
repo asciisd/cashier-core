@@ -717,4 +717,21 @@ class PaymentLogger
             'drift' => round($actualReceived - $expectedReceived, 2),
         ]);
     }
+
+    /**
+     * The retention purge ran (PCI DSS 3.2.1/3.3 audit trail).
+     */
+    public static function retentionPurged(
+        int $payloadsCleared,
+        int $webhookEventsDeleted,
+        int $payloadRetentionDays,
+        int $eventRetentionDays,
+    ): void {
+        self::channel()->info('Cashier retention purge completed', [
+            'provider_payloads_cleared' => $payloadsCleared,
+            'webhook_events_deleted' => $webhookEventsDeleted,
+            'payload_retention_days' => $payloadRetentionDays,
+            'webhook_event_retention_days' => $eventRetentionDays,
+        ]);
+    }
 }
