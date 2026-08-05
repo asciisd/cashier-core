@@ -4,373 +4,234 @@
 [![Total Downloads](https://img.shields.io/packagist/dt/asciisd/cashier-core.svg?style=flat-square)](https://packagist.org/packages/asciisd/cashier-core)
 [![License](https://img.shields.io/packagist/l/asciisd/cashier-core.svg?style=flat-square)](https://packagist.org/packages/asciisd/cashier-core)
 
-A flexible payment processing system for Laravel using the Factory Pattern. This package provides a unified interface for multiple payment processors, making it easy to add new payment gateways without changing your application code.
+A complete, PCI-DSS-aligned payment engine for Laravel: connection-based charge
+orchestration, a hardened webhook pipeline (signature enforcement, replay guard,
+row-locked transitions, amount-deviation holds), an approve-first withdrawal
+workflow with an audit trail, and a ledger contract that keeps your funds system
+(MT5, wallet, banking core) behind an interface you own.
 
-## Features
+Five direct PSP drivers ship bundled — **APS, Jenapay, Heropayment, Payport,
+Sticpay** — plus internal `manual`, `bank_transfer` and `crypto` providers. All
+of them are hosted-redirect: no PAN or CVV ever touches your application
+(SAQ-A posture). Paytiko and KNET remain separate plugins
+(`asciisd/cashier-paytiko`, `asciisd/knet`) built on this core.
 
-- **Factory Pattern**: Easy to extend with new payment processors
-- **Unified Interface**: Consistent API across all payment processors
-- **Laravel Integration**: Native Laravel package with service provider
-- **Database Models**: Built-in models for transactions, payments, and payment methods
-- **Configurable**: Flexible configuration system
-- **Testable**: Comprehensive test suite included
-- **Multiple Processors**: Support for custom processors
-- **Refund Support**: Full and partial refunds
-- **Authorization & Capture**: Pre-authorization and later capture
-- **Payment Methods**: Store and manage customer payment methods
-- **Webhooks**: Built-in webhook handling support
-- **Security**: Encrypted sensitive data storage
-- **Logging**: Comprehensive payment logging
+Upgrading from 1.x? Read [UPGRADE-2.0.md](UPGRADE-2.0.md).
+
+## Requirements
+
+- PHP ^8.3
+- Laravel ^11 | ^12 | ^13
 
 ## Installation
 
 ```bash
 composer require asciisd/cashier-core
+
+php artisan cashier:install --migrate
+php artisan cashier:check
 ```
 
-## Configuration
+`cashier:check` is the doctor — it validates connections, the security posture,
+and the database indexes, and exits non-zero for CI.
 
-Publish the configuration file:
+## Concepts: connections and drivers
 
-```bash
-php artisan vendor:publish --provider="Asciisd\CashierCore\CashierCoreServiceProvider" --tag="config"
-```
-
-Publish and run the migrations:
-
-```bash
-php artisan vendor:publish --provider="Asciisd\CashierCore\CashierCoreServiceProvider" --tag="migrations"
-php artisan migrate
-```
-
-## Environment Configuration
-
-Add the following environment variables to your `.env` file:
-
-```env
-# Default processor
-CASHIER_DEFAULT_PROCESSOR=stripe
-
-# General Settings
-CASHIER_CURRENCY=USD
-CASHIER_LOGGING_ENABLED=true
-```
-
-## Usage
-
-### Basic Payment Processing
-
-```php
-use Asciisd\CashierCore\Facades\PaymentFactory;
-
-// Create a payment processor
-$processor = PaymentFactory::create('stripe');
-
-// Process a payment
-$result = $processor->charge([
-    'amount' => 20, // $20.00
-    'currency' => 'USD',
-    'source' => 'tok_visa',
-    'description' => 'Order #12345',
-    'metadata' => [
-        'order_id' => '12345',
-        'customer_id' => 'cust_123',
-    ],
-]);
-
-if ($result->isSuccessful()) {
-    echo "Payment successful! Transaction ID: {$result->transactionId}";
-} else {
-    echo "Payment failed: {$result->message}";
-}
-```
-
-### Working with Different Processors
-
-```php
-// Check available processors
-$processors = PaymentFactory::getProcessorNames();
-// Returns: []
-```
-
-### Refund Processing
-
-```php
-$processor = PaymentFactory::create('stripe');
-
-// Full refund
-$refundResult = $processor->refund('ch_transaction_id');
-
-// Partial refund
-$partialRefundResult = $processor->refund('ch_transaction_id', 500); // $5.00
-
-if ($refundResult->isSuccessful()) {
-    echo "Refund successful! Refund ID: {$refundResult->refundId}";
-}
-```
-
-### Authorization and Capture
-
-```php
-$processor = PaymentFactory::create('stripe');
-
-// Authorize payment
-$authResult = $processor->authorize([
-    'amount' => 3000,
-    'currency' => 'USD',
-    'source' => 'tok_visa',
-    'description' => 'Pre-authorization',
-]);
-
-if ($authResult->isSuccessful()) {
-    // Later, capture the payment
-    $captureResult = $processor->capture($authResult->transactionId, 2500);
-}
-```
-
-### Database Models
-
-#### Using the Payable Trait
-
-Add the `Payable` trait to your models that can make payments:
-
-```php
-use Asciisd\CashierCore\Traits\Payable;
-
-class User extends Model
-{
-    use Payable;
-    
-    // Your model code...
-}
-```
-
-This provides helpful methods:
-
-```php
-$user = User::find(1);
-
-// Get all transactions
-$transactions = $user->transactions;
-
-// Get successful transactions
-$successful = $user->getSuccessfulTransactions();
-
-// Get total amount spent
-$totalSpent = $user->getTotalSpent(); // Returns total amount
-$formattedTotal = $user->getFormattedTotalSpent(); // Returns formatted string
-
-// Payment methods
-$paymentMethods = $user->paymentMethods;
-$defaultMethod = $user->getDefaultPaymentMethod();
-```
-
-#### Working with Transactions
-
-```php
-use Asciisd\CashierCore\Models\Transaction;
-
-// Create a transaction record
-$transaction = Transaction::create([
-    'processor_name' => 'stripe',
-    'processor_transaction_id' => $result->transactionId,
-    'payable_type' => 'App\\Models\\User',
-    'payable_id' => $user->id,
-    'amount' => $result->amount,
-    'currency' => $result->currency,
-    'status' => $result->status,
-    'description' => 'Order payment',
-    'processed_at' => now(),
-]);
-
-// Query transactions
-$successfulTransactions = Transaction::successful()->get();
-$stripeTransactions = Transaction::byProcessor('stripe')->get();
-$recentTransactions = Transaction::where('created_at', '>=', now()->subDays(7))->get();
-```
-
-#### Managing Payment Methods
-
-```php
-use Asciisd\CashierCore\Models\PaymentMethod;
-
-// Create a payment method
-$paymentMethod = PaymentMethod::create([
-    'user_type' => 'App\\Models\\User',
-    'user_id' => $user->id,
-    'processor_name' => 'stripe',
-    'processor_payment_method_id' => 'pm_1234567890',
-    'type' => 'credit_card',
-    'brand' => 'visa',
-    'last_four' => '4242',
-    'exp_month' => 12,
-    'exp_year' => 2025,
-    'is_default' => true,
-]);
-
-// Make it the default
-$paymentMethod->makeDefault();
-
-// Check expiration
-if ($paymentMethod->is_expired) {
-    // Handle expired payment method
-}
-```
-
-### Adding Custom Payment Processors
-
-1. Create a class that extends `AbstractPaymentProcessor`:
-
-```php
-use Asciisd\CashierCore\Abstracts\AbstractPaymentProcessor;
-use Asciisd\CashierCore\DataObjects\PaymentResult;
-use Asciisd\CashierCore\DataObjects\RefundResult;
-
-class CustomProcessor extends AbstractPaymentProcessor
-{
-    protected array $supportedFeatures = ['charge', 'refund'];
-
-    public function getName(): string
-    {
-        return 'custom';
-    }
-
-    public function charge(array $data): PaymentResult
-    {
-        $validatedData = $this->validatePaymentData($data);
-        
-        // Your payment processing logic here
-        
-        return $this->createSuccessResult(
-            transactionId: 'custom_' . uniqid(),
-            amount: $validatedData['amount'],
-            currency: $validatedData['currency']
-        );
-    }
-
-    public function refund(string $transactionId, ?int $amount = null): RefundResult
-    {
-        // Your refund logic here
-    }
-}
-```
-
-2. Register it in your configuration:
+A **driver** is an integration (`aps`, `payport`, ...). A **connection** is one
+PSP *account* using that driver — its credentials and routing. Two APS merchant
+accounts are two connections sharing one driver. Your payment methods should
+name a connection, not a driver; the driver string is what gets persisted to
+`transactions.provider`, so webhook correlation stays coarse while refunds and
+syncs use the exact account that took the charge (`transactions.connection`).
 
 ```php
 // config/cashier-core.php
-'processors' => [
-    'custom' => [
-        'class' => \App\PaymentProcessors\CustomProcessor::class,
-        'config' => [
-            'api_key' => env('CUSTOM_API_KEY'),
-            'secret' => env('CUSTOM_SECRET'),
-        ],
+'default_connection' => env('CASHIER_DEFAULT_CONNECTION', 'manual'),
+
+'connections' => [
+    'aps' => [
+        'driver' => 'aps',
+        'base_url' => env('APS_BASE_URL'),
+        'merchant_guid' => env('APS_MERCHANT_GUID'),
+        'app_token' => env('APS_APP_TOKEN'),
+        'app_secret' => env('APS_APP_SECRET'),
+        'callback_secret' => env('APS_CALLBACK_SECRET'),
+    ],
+    'aps_binance' => [
+        'driver' => 'aps',            // same driver, different account
+        'merchant_guid' => env('APS_BINANCE_MERCHANT_GUID'),
+        // ...
     ],
 ],
 ```
 
-3. Use it through the factory:
+Bundled drivers resolve automatically; a connection with a `class` key
+overrides the driver map, and plugins append their drivers to
+`cashier-core.drivers`.
+
+## Host integration
+
+The package never assumes your user model, your account model, or your funds
+system. You plug in through four seams:
 
 ```php
-$processor = PaymentFactory::create('custom');
+// 1. Your user model
+class User extends Authenticatable implements \Asciisd\CashierCore\Contracts\CustomerContract
+{
+    public function cashierId(): int|string { return $this->id; }
+    public function cashierEmail(): string { return $this->email; }
+    public function cashierName(): string { return $this->name; }
+    public function cashierLocale(): string { return $this->locale ?? 'en'; }
+}
+
+// 2. Your funds system — without this binding, the default NullLedger
+//    refuses every movement loudly instead of pretending funds moved.
+$this->app->singleton(FundsLedger::class, Mt5FundsLedger::class);
+
+// 3. Optional: resolve which account a deposit funds (by reference, etc.).
+$this->app->singleton(ResolvesFundingAccount::class, TradingAccountResolver::class);
+
+// 4. Optional: your own transaction model extending the package base model.
+'models' => [
+    'transaction' => \App\Models\Transaction::class,
+    'customer' => \App\Models\User::class,
+],
 ```
 
-### Error Handling
+## Charging
 
 ```php
-use Asciisd\CashierCore\Exceptions\InvalidPaymentDataException;
-use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
-use Asciisd\CashierCore\Exceptions\ProcessorNotFoundException;
+use Asciisd\CashierCore\Services\PaymentService;
 
-try {
-    $processor = PaymentFactory::create('stripe');
-    $result = $processor->charge($paymentData);
-    
-} catch (InvalidPaymentDataException $e) {
-    // Handle validation errors
-    echo "Invalid payment data: {$e->getMessage()}";
-    
-} catch (PaymentProcessingException $e) {
-    // Handle payment processing errors
-    echo "Payment failed: {$e->getMessage()}";
-    if ($e->getTransactionId()) {
-        echo "Transaction ID: {$e->getTransactionId()}";
-    }
-    
-} catch (ProcessorNotFoundException $e) {
-    // Handle unknown processor
-    echo "Processor not found: {$e->getMessage()}";
+$result = app(PaymentService::class)->processPayment(
+    customer: $user,
+    paymentData: ['amount' => 100, 'trading_account_login' => 555555],
+    connection: 'aps',
+    feeConfiguration: $paymentMethod,   // implements FeeConfigurationContract, or null
+);
+
+if ($result->requiresAction()) {
+    return redirect($result->getRedirectUrl());
 }
 ```
 
-## Testing
+- Fees are resolved by `FeeCalculator` before charging and the PSP is handed
+  the grossed-up amount; the transaction stores the customer's deposit in
+  `amount` plus an immutable fee snapshot (`requested_amount`,
+  `charged_amount`, `psp_fee_amount`, `markup_amount`, `settlement_mode`).
+- Drivers that need to shape their own payload (routing hints, fixed
+  currencies, billing shape) implement `PreparesChargeData` — the orchestrator
+  carries no per-provider branches.
+- The charge response payload is sanitized and redacted before persistence,
+  and `ChargeCreated` is dispatched with the persisted transaction.
 
-Run the test suite:
+## Webhooks
 
-```bash
-composer test
+The package registers `POST {prefix}/{driver}` for every bundled driver
+(default prefix `api/webhooks`, group configurable under
+`cashier-core.routes`; disable with `Cashier::ignoreRoutes()`).
+
+Every delivery passes through the same hardened pipeline:
+
+1. **Signature verification** against each configured account of the driver —
+   the matching account identifies the sender, and the matched connection rides
+   with the queued job. Setting `verify_signature=false` is honored only
+   outside production; in production the controllers refuse the delivery and
+   log critical.
+2. **Replay guard** — a digest of (driver, signature, body) is claimed in
+   `cashier_webhook_events`; a duplicate delivery gets the provider's expected
+   ACK without dispatching anything.
+3. **Queued processing** on the dedicated `payments` queue with a unique job
+   (driver + payload hash).
+4. **Row-locked transition** — correlation bypasses your tenant scopes but
+   never SoftDeletes, guards run against a locked re-read, and only the one
+   delivery that changes the status runs side effects.
+5. **Amount assertion** — a success whose reported amount deviates from the
+   invoice beyond `webhooks.amount_tolerance_percent` (or whose currency
+   mismatches) becomes `PaymentStatus::OnHold`: no credit, no success events,
+   `DepositHeldForReview` instead. Client-controlled rails (crypto) reconcile
+   to what actually arrived instead.
+6. **Ledger credit** under an atomic claim (`TransferClaim`) — two racing
+   processes cannot both credit, and an ambiguous failure (timeout) leaves the
+   claim in place rather than risking a double credit.
+
+Side effects are yours: the package sends no mail and touches no CRM. Listen
+for the events:
+
+| Event | When |
+|---|---|
+| `ChargeCreated` | charge persisted (hosted-page redirect may follow) |
+| `WebhookReceived` / `WebhookRejected` | delivery accepted (redacted payload) / refused |
+| `TransactionStatusChanged` | every status transition, with source (`webhook`/`sync`) |
+| `DepositSucceeded` / `DepositFailed` / `DepositHeldForReview` | deposit outcomes |
+| `FundsCredited` / `FundsCreditFailed` | ledger credit outcomes |
+| `FeeDriftDetected` | PSP settlement diverges from configured fees |
+| `RefundSucceeded` / `RefundFailed` | refund outcomes |
+| `WithdrawalRequested/Approved/Rejected/MarkedPaid/Cancelled/DebitFailed` | withdrawal lifecycle |
+| `AdminActionRecorded` | every audited admin money action |
+
+## Withdrawals
+
+`WithdrawalWorkflow` implements the approve-first state machine: `request()`
+creates a Pending row (duplicate-window guarded) without touching the ledger;
+`approve()` debits under a claim and moves to Processing; `markPaid()`,
+`reject()` and `cancel()` complete the lifecycle, refunding the debit where one
+was taken. Every admin action writes a `cashier_admin_actions` row (actor,
+guard, IP, before/after status) — PCI DSS 10.2 — and returns a `Result` DTO
+your admin panel can render directly. Legacy debit-at-submission mode is one
+config flag (`withdrawals.approve_first = false`).
+
+## Sync
+
+`PaymentService::syncTransaction($transaction)` pulls the provider's current
+state (using the stored connection's credentials) and applies it through the
+same webhook pipeline — a sync that recovers a missed success also fires the
+deposit events and credits the ledger.
+
+## Security posture (PCI DSS v4)
+
+- Hosted-redirect drivers only; the sanitizer strips card-shaped keys before
+  any payload is persisted (3.2.1, 4.2.1 — SAQ-A preserved).
+- `provider_payload` / `withdrawal_details` are `encrypted:array` casts,
+  toggleable via `cashier-core.security` (3.4.1, 3.5.1).
+- `PayloadRedactor` runs on every logged payload and URL (10.2 log hygiene).
+- `cashier:purge` enforces retention on payloads and replay-guard rows (3.2.1/3.3).
+- Signature verification is non-disableable in production; replay protection
+  via `cashier_webhook_events` (4.2.1, 6.2.4).
+- `cashier_admin_actions` audit trail on every admin money action (10.2.1–10.3).
+- The package never holds ledger credentials — the host binds `FundsLedger`
+  (7.x least privilege).
+
+## Testing your integration
+
+```php
+// Fake connections: charges record in-process, nothing reaches a PSP.
+$fake = Cashier::fake(['aps']);
+$fake->whenCharging('aps', $declinedResult);           // queue outcomes
+$fake->assertChargedOn('aps', fn ($data) => $data['amount'] === 100);
+
+// Real drivers without sandbox secrets: driver-appropriate test credentials.
+Cashier::fakeConnection('aps_binance', ['callback_secret' => 'other']);
+
+// Webhooks signed exactly as the PSP would sign them.
+$delivery = WebhookSimulator::make('aps', $payload, connection: 'aps_binance');
+$this->postJson($delivery->uri, $delivery->payload, $delivery->headers)->assertOk();
+
+// Ledger assertions without an MT5 server.
+app()->instance(FundsLedger::class, $ledger = new FakeLedger);
+$ledger->assertMoved('credit', fn ($m) => $m['amount'] === 100.0);
+$ledger->refuseAll();          // simulate a refusing ledger
 ```
 
-Run tests with coverage:
+## Artisan commands
 
-```bash
-composer test-coverage
-```
-
-## Configuration Options
-
-The package provides extensive configuration options. See the published config file for all available settings:
-
-- **Processors**: Configure multiple payment processors
-- **Currency**: Set default and supported currencies
-- **Database**: Customize table names and connections
-- **Webhooks**: Configure webhook handling
-- **Logging**: Control payment logging
-- **Security**: Configure data encryption and masking
-- **Retry Logic**: Set up retry mechanisms for failed payments
-- **Feature Flags**: Enable/disable specific features
-
-## Supported Payment Processors
-
-### Built-in Processors
-
-### Extensible Architecture
-
-The Factory Pattern makes it easy to add new processors:
-
-1. Implement the `PaymentProcessorInterface`
-2. Extend `AbstractPaymentProcessor` for common functionality
-3. Register in configuration
-4. Use immediately through the factory
-
-## Security Features
-
-- **Data Encryption**: Sensitive data is encrypted before storage
-- **Card Masking**: Credit card numbers are automatically masked
-- **Webhook Verification**: Secure webhook signature verification
-- **Input Validation**: Comprehensive input validation for all processors
-
-## Examples
-
-Check the `examples/BasicUsage.php` file for comprehensive usage examples covering:
-
-- Basic payment processing
-- Refund handling
-- Authorization and capture
-- Payment method management
-- Error handling
-- Custom processor registration
-- Database queries
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+| Command | Purpose |
+|---|---|
+| `cashier:install` | Publish config, optionally migrate, print the integration checklist |
+| `cashier:check` | Doctor: connections, security posture, indexes, bindings — non-zero exit on failure |
+| `cashier:publish` | Publish config and/or migrations (`--config`, `--migrations`, `--force`) |
+| `cashier:purge` | Enforce payload/webhook-event retention (`--dry-run`) |
 
 ## License
 
-The MIT License (MIT). Please see [License File](LICENSE.md) for more information.
-
-## Support
-
-For support, please open an issue on GitHub or contact us at <info@asciisd.com>.
+MIT — see [LICENSE.md](LICENSE.md).
