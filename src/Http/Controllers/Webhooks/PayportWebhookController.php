@@ -14,6 +14,7 @@ use Asciisd\CashierCore\Http\Concerns\EnforcesSignatureVerification;
 use Asciisd\CashierCore\Jobs\ProcessPaymentProviderWebhook;
 use Asciisd\CashierCore\Logging\PaymentLogger;
 use Asciisd\CashierCore\Services\Webhooks\ReplayGuard;
+use Asciisd\CashierCore\Services\Webhooks\WebhookRelay;
 use Asciisd\CashierCore\Support\PayloadRedactor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -25,8 +26,12 @@ class PayportWebhookController extends Controller
 
     private const DRIVER = 'payport';
 
-    public function __invoke(Request $request, ConnectionRegistry $registry, ReplayGuard $replayGuard): JsonResponse
-    {
+    public function __invoke(
+        Request $request,
+        ConnectionRegistry $registry,
+        ReplayGuard $replayGuard,
+        WebhookRelay $relay,
+    ): JsonResponse {
         // Payport posts callbacks as application/x-www-form-urlencoded.
         $payload = $request->isJson() ? $request->json()->all() : $request->post();
 
@@ -61,6 +66,8 @@ class PayportWebhookController extends Controller
                 return response()->json(['status' => 'ok']);
             }
         }
+
+        $relay->maybeRelay(self::DRIVER, $matchedConnection, $payload, $request);
 
         ProcessPaymentProviderWebhook::dispatch(self::DRIVER, $payload, $matchedConnection);
 

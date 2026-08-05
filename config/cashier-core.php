@@ -1,5 +1,7 @@
 <?php
 
+use Asciisd\CashierCore\Models\Transaction;
+
 return [
     /*
     |--------------------------------------------------------------------------
@@ -61,7 +63,7 @@ return [
     |
     */
     'models' => [
-        'transaction' => \Asciisd\CashierCore\Models\Transaction::class,
+        'transaction' => Transaction::class,
         'customer' => null,
     ],
 
@@ -167,6 +169,20 @@ return [
         'verify_signature' => env('CASHIER_VERIFY_WEBHOOK_SIGNATURE', true),
         'amount_tolerance_percent' => (float) env('CASHIER_WEBHOOK_AMOUNT_TOLERANCE', 1.0),
         'replay_ttl_days' => env('CASHIER_WEBHOOK_REPLAY_TTL_DAYS', 30),
+
+        /*
+         * Callback relay, per driver. Set a URL when this application took
+         * over a callback endpoint that already belonged to a third party:
+         * every verified delivery that matches no local transaction is then
+         * relayed there verbatim, so the party that opened the deposit can
+         * still see how it settled. Unset drivers relay nothing.
+         *
+         * Relaying happens only after the signature verifies, so the endpoint
+         * cannot be used to pump arbitrary payloads at the recipient.
+         */
+        'relay' => array_filter([
+            'jenapay' => env('CASHIER_RELAY_JENAPAY_URL'),
+        ]),
     ],
 
     /*

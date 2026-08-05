@@ -3,6 +3,7 @@
 namespace Asciisd\CashierCore\Logging;
 
 use Illuminate\Support\Facades\Log;
+use Psr\Log\LoggerInterface;
 
 class PaymentLogger
 {
@@ -10,7 +11,7 @@ class PaymentLogger
      * The log channel every payment line goes to — configurable per host via
      * cashier-core.logging.channel; null falls through to the default channel.
      */
-    protected static function channel(): \Psr\Log\LoggerInterface
+    protected static function channel(): LoggerInterface
     {
         return Log::channel(config('cashier-core.logging.channel'));
     }
@@ -656,6 +657,25 @@ class PaymentLogger
         self::channel()->warning('Provider quote lookup failed', [
             'provider' => $provider,
             'lookup' => $lookup,
+            'error' => $error,
+        ]);
+    }
+
+    public static function providerWebhookRelayed(string $provider, string $url, int $httpStatus): void
+    {
+        self::channel()->info('Provider webhook relayed', [
+            'provider' => $provider,
+            'url' => $url,
+            'http_status' => $httpStatus,
+        ]);
+    }
+
+    public static function providerWebhookRelayFailed(string $provider, string $url, ?int $httpStatus, string $error): void
+    {
+        self::channel()->warning('Provider webhook relay failed', [
+            'provider' => $provider,
+            'url' => $url,
+            'http_status' => $httpStatus,
             'error' => $error,
         ]);
     }

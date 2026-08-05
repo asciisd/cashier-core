@@ -12,6 +12,7 @@ use Asciisd\CashierCore\Http\Concerns\EnforcesSignatureVerification;
 use Asciisd\CashierCore\Jobs\ProcessPaymentProviderWebhook;
 use Asciisd\CashierCore\Logging\PaymentLogger;
 use Asciisd\CashierCore\Services\Webhooks\ReplayGuard;
+use Asciisd\CashierCore\Services\Webhooks\WebhookRelay;
 use Asciisd\CashierCore\Support\PayloadRedactor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -23,8 +24,12 @@ class HeropaymentWebhookController extends Controller
 
     private const DRIVER = 'heropayment';
 
-    public function __invoke(Request $request, ConnectionRegistry $registry, ReplayGuard $replayGuard): JsonResponse
-    {
+    public function __invoke(
+        Request $request,
+        ConnectionRegistry $registry,
+        ReplayGuard $replayGuard,
+        WebhookRelay $relay,
+    ): JsonResponse {
         if ($this->signatureVerificationEnabled(self::DRIVER)) {
             $signature = (string) $request->header('x-api-sign', '');
 
@@ -46,6 +51,8 @@ class HeropaymentWebhookController extends Controller
         }
 
         $payload = $request->json()->all();
+
+        $relay->maybeRelay(self::DRIVER, self::DRIVER, $payload, $request);
 
         ProcessPaymentProviderWebhook::dispatch(self::DRIVER, $payload, self::DRIVER);
 

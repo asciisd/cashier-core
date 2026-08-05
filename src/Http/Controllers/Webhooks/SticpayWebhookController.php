@@ -16,6 +16,7 @@ use Asciisd\CashierCore\Http\Concerns\EnforcesSignatureVerification;
 use Asciisd\CashierCore\Jobs\ProcessPaymentProviderWebhook;
 use Asciisd\CashierCore\Logging\PaymentLogger;
 use Asciisd\CashierCore\Services\Webhooks\ReplayGuard;
+use Asciisd\CashierCore\Services\Webhooks\WebhookRelay;
 use Asciisd\CashierCore\Support\PayloadRedactor;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -27,8 +28,12 @@ class SticpayWebhookController extends Controller
 
     private const DRIVER = 'sticpay';
 
-    public function __invoke(Request $request, ConnectionRegistry $registry, ReplayGuard $replayGuard): Response
-    {
+    public function __invoke(
+        Request $request,
+        ConnectionRegistry $registry,
+        ReplayGuard $replayGuard,
+        WebhookRelay $relay,
+    ): Response {
         // Sticpay posts callbacks as application/x-www-form-urlencoded, with
         // everything wrapped in a double JSON-encoded `callback` field.
         $payload = SticpayCallbackPayload::fromInput(
@@ -84,6 +89,8 @@ class SticpayWebhookController extends Controller
             // SticpayProvider::parseWebhook(), which also covers admin sync.
             return $this->text('OK');
         }
+
+        $relay->maybeRelay(self::DRIVER, $matchedConnection, $payload->toArray(), $request);
 
         ProcessPaymentProviderWebhook::dispatch(self::DRIVER, $payload->toArray(), $matchedConnection);
 

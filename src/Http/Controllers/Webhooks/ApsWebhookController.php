@@ -15,6 +15,7 @@ use Asciisd\CashierCore\Http\Concerns\EnforcesSignatureVerification;
 use Asciisd\CashierCore\Jobs\ProcessPaymentProviderWebhook;
 use Asciisd\CashierCore\Logging\PaymentLogger;
 use Asciisd\CashierCore\Services\Webhooks\ReplayGuard;
+use Asciisd\CashierCore\Services\Webhooks\WebhookRelay;
 use Asciisd\CashierCore\Support\PayloadRedactor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -26,8 +27,12 @@ class ApsWebhookController extends Controller
 
     private const DRIVER = 'aps';
 
-    public function __invoke(Request $request, ConnectionRegistry $registry, ReplayGuard $replayGuard): JsonResponse
-    {
+    public function __invoke(
+        Request $request,
+        ConnectionRegistry $registry,
+        ReplayGuard $replayGuard,
+        WebhookRelay $relay,
+    ): JsonResponse {
         $matchedConnection = null;
 
         if ($this->signatureVerificationEnabled(self::DRIVER)) {
@@ -50,6 +55,8 @@ class ApsWebhookController extends Controller
         }
 
         $payload = $request->json()->all();
+
+        $relay->maybeRelay(self::DRIVER, $matchedConnection, $payload, $request);
 
         ProcessPaymentProviderWebhook::dispatch(self::DRIVER, $payload, $matchedConnection);
 

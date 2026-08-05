@@ -16,10 +16,10 @@ use Illuminate\Support\Facades\Queue;
  * tests/Unit/Drivers/JenapayAdapterTest.php and the pipeline by
  * WebhookProcessorTest — here the controller contract is what's under test.
  *
- * The app's relay tests (`transactions.webhooks.forward.jenapay`, forwarding
- * Paytiko-routed callbacks verbatim) are NOT ported: the package controller
- * has no forwarding feature. Hosts that need the Paytiko relay must keep
- * their own controller in front of the shared endpoint.
+ * The app's relay tests (forwarding callbacks that settle somebody else's
+ * deposits) live in WebhookRelayTest — the feature generalized into
+ * WebhookRelay and `cashier-core.webhooks.relay.{driver}`, so it is no longer
+ * a Jenapay controller concern.
  */
 
 beforeEach(function () {

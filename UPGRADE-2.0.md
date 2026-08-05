@@ -78,6 +78,28 @@ panel and decide the resolution path (admin sync or manual release).
   your tests asserted "second delivery dispatches and is de-duplicated
   downstream", they now assert "second delivery dispatches nothing".
 
+### Callback relay
+
+If your app took over a PSP callback URL that already belonged to a third
+party — an aggregator still routing deposits through the same merchant account
+— set `webhooks.relay.{driver}` to its URL. Every verified delivery that
+matches no local transaction is then relayed there verbatim by `RelayWebhook`,
+so the party that opened the deposit still sees how it settled.
+
+Hosts that hand-rolled this (a controller in front of the shared endpoint,
+dispatching their own forwarding job) should delete it and configure the URL
+instead. Two behavior notes when you migrate:
+
+- The **raw request body** is relayed under its original `Content-Type`, not a
+  re-encoded array. If you were re-encoding, this fixes a latent fidelity bug:
+  key order and escaping are what a payload signature covers.
+- A **duplicate** delivery is not relayed twice — the replay guard claims it
+  first. An app-side relay with no replay guard would have forwarded both.
+
+Soft-deleted transactions count as *yours* and are not relayed. The relay runs
+only after the signature verifies, so the endpoint cannot be used to pump
+arbitrary payloads at the recipient.
+
 ## Side effects moved behind events
 
 The 1.x-era hosts sent invoice mail and admin notifications inside the webhook

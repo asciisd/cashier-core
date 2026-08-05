@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
 
 it('registers every webhook route under the configured prefix and name prefix', function () {
@@ -17,5 +18,5 @@ it('registers every webhook route under the configured prefix and name prefix', 
 });
 
 it('registers a default cashier-webhooks rate limiter', function () {
-    expect(Illuminate\Support\Facades\RateLimiter::limiter('cashier-webhooks'))->not->toBeNull();
+    expect(RateLimiter::limiter('cashier-webhooks'))->not->toBeNull();
 });

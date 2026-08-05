@@ -11,6 +11,7 @@ use Asciisd\CashierCore\Http\Concerns\EnforcesSignatureVerification;
 use Asciisd\CashierCore\Jobs\ProcessPaymentProviderWebhook;
 use Asciisd\CashierCore\Logging\PaymentLogger;
 use Asciisd\CashierCore\Services\Webhooks\ReplayGuard;
+use Asciisd\CashierCore\Services\Webhooks\WebhookRelay;
 use Asciisd\CashierCore\Support\PayloadRedactor;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -34,8 +35,12 @@ class JenapayWebhookController extends Controller
 
     private const NACK = 'ERROR';
 
-    public function __invoke(Request $request, ConnectionRegistry $registry, ReplayGuard $replayGuard): Response
-    {
+    public function __invoke(
+        Request $request,
+        ConnectionRegistry $registry,
+        ReplayGuard $replayGuard,
+        WebhookRelay $relay,
+    ): Response {
         $payload = $request->isJson() ? $request->json()->all() : $request->post();
 
         if ($this->signatureVerificationEnabled(self::DRIVER)) {
@@ -63,6 +68,8 @@ class JenapayWebhookController extends Controller
                 return response(self::ACK)->header('Content-Type', 'text/plain');
             }
         }
+
+        $relay->maybeRelay(self::DRIVER, self::DRIVER, $payload, $request);
 
         ProcessPaymentProviderWebhook::dispatch(self::DRIVER, $payload, self::DRIVER);
 
