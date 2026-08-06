@@ -74,7 +74,7 @@ describe('fromWebhook', function () {
 
         expect($update)->toBeInstanceOf(TransactionWebhookUpdate::class)
             ->and($update->status)->toBe(PaymentStatus::Succeeded)
-            ->and($update->amount)->toBe(500)
+            ->and($update->amount)->toBe(500.0)
             ->and($update->metadata['aps_transaction_id'])->toBe('b829f009-afe0-45c2-9996-8941f80bcb0e')
             ->and($update->errorMessage)->toBeNull();
     });

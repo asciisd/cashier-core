@@ -146,12 +146,12 @@ class PayportProvider implements PaymentProcessorInterface, ProvidesWebhookTrans
         ]);
     }
 
-    public function refund(string $transactionId, ?int $amount = null): RefundResult
+    public function refund(string $transactionId, ?float $amount = null): RefundResult
     {
         throw new \BadMethodCallException('Payport refunds are handled by the provider’s support team.');
     }
 
-    public function capture(string $transactionId, ?int $amount = null): PaymentResult
+    public function capture(string $transactionId, ?float $amount = null): PaymentResult
     {
         throw new \BadMethodCallException('Payport capture is not supported in the hosted invoice flow.');
     }

@@ -81,7 +81,7 @@ it('extracts the reconciliation metadata from a callback', function () {
     $update = (new SticpayAdapter)->fromWebhook(sticpayFlatCallback());
 
     expect($update->status)->toBe(PaymentStatus::Succeeded)
-        ->and($update->amount)->toBe(100)
+        ->and($update->amount)->toBe(100.0)
         ->and($update->currency)->toBe('USD')
         ->and($update->metadata['sticpay_transaction_code'])->toBe('232857')
         ->and($update->metadata['sticpay_transaction_time'])->toBe('2018-03-15 16:22:45')

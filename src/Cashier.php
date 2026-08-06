@@ -6,6 +6,7 @@ namespace Asciisd\CashierCore;
 
 use Asciisd\CashierCore\Connections\Connections;
 use Asciisd\CashierCore\Contracts\CustomerContract;
+use Asciisd\CashierCore\Models\Refund;
 use Asciisd\CashierCore\Models\Transaction;
 use Asciisd\CashierCore\Testing\CashierFake;
 use Asciisd\CashierCore\Testing\FakeProvider;
@@ -55,6 +56,16 @@ final class Cashier
     public static function transactionModel(): string
     {
         return config('cashier-core.models.transaction', Transaction::class);
+    }
+
+    /**
+     * The refund model, so a host can extend it the way it extends Transaction.
+     *
+     * @return class-string<Refund>
+     */
+    public static function refundModel(): string
+    {
+        return config('cashier-core.models.refund', Refund::class);
     }
 
     /**

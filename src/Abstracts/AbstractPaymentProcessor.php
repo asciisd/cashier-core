@@ -25,9 +25,9 @@ abstract class AbstractPaymentProcessor implements PaymentProcessorInterface
 
     abstract public function charge(array $data): PaymentResult;
 
-    abstract public function refund(string $transactionId, ?int $amount = null): RefundResult;
+    abstract public function refund(string $transactionId, ?float $amount = null): RefundResult;
 
-    public function capture(string $transactionId, ?int $amount = null): PaymentResult
+    public function capture(string $transactionId, ?float $amount = null): PaymentResult
     {
         throw new \BadMethodCallException('Capture method not implemented for ' . $this->getName());
     }

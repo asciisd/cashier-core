@@ -93,7 +93,7 @@ class PaymentLogger
         ]);
     }
 
-    public static function refundProcessedSuccessfully(string $transactionId, ?string $refundId, ?int $amount): void
+    public static function refundProcessedSuccessfully(string $transactionId, ?string $refundId, ?float $amount): void
     {
         self::channel()->info('Refund processed successfully', [
             'transaction_id' => $transactionId,

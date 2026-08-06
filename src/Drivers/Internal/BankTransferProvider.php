@@ -117,7 +117,7 @@ class BankTransferProvider implements PaymentProcessorInterface
         return $code;
     }
 
-    public function refund(string $transactionId, ?int $amount = null): RefundResult
+    public function refund(string $transactionId, ?float $amount = null): RefundResult
     {
         throw new PaymentProcessingException('Bank transfer provider does not support automatic refunds');
     }
@@ -142,7 +142,7 @@ class BankTransferProvider implements PaymentProcessorInterface
         return $feature === 'charge';
     }
 
-    public function capture(string $transactionId, ?int $amount = null): PaymentResult
+    public function capture(string $transactionId, ?float $amount = null): PaymentResult
     {
         throw new \BadMethodCallException('Not supported');
     }

@@ -134,12 +134,12 @@ class HeropaymentProvider implements PaymentProcessorInterface, ProvidesWebhookT
         return $ticker === null || $ticker === '' ? null : strtolower((string) $ticker);
     }
 
-    public function refund(string $transactionId, ?int $amount = null): RefundResult
+    public function refund(string $transactionId, ?float $amount = null): RefundResult
     {
         throw new \BadMethodCallException('Heropayment does not support merchant-initiated refunds.');
     }
 
-    public function capture(string $transactionId, ?int $amount = null): PaymentResult
+    public function capture(string $transactionId, ?float $amount = null): PaymentResult
     {
         throw new \BadMethodCallException('Heropayment does not support capture.');
     }

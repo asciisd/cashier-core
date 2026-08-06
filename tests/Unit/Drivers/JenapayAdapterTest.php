@@ -69,7 +69,7 @@ describe('fromWebhook', function () {
         ]);
 
         expect($update->status)->toBe(PaymentStatus::Succeeded)
-            ->and($update->amount)->toBe(250)
+            ->and($update->amount)->toBe(250.0)
             ->and($update->metadata['jenapay_payment_id'])->toBe('pay-99')
             ->and($update->errorMessage)->toBeNull();
     });

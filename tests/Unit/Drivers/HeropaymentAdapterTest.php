@@ -65,7 +65,7 @@ describe('fromWebhook', function () {
         ]);
 
         expect($update->status)->toBe(PaymentStatus::Succeeded)
-            ->and($update->amount)->toBe(100)
+            ->and($update->amount)->toBe(100.0)
             ->and($update->currency)->toBe('USD')
             ->and($update->metadata['heropayment_payment_id'])->toBe('pay-1')
             ->and($update->paymentMethodSnapshot->displayName)->toBe('Crypto (USDTTRC20)');

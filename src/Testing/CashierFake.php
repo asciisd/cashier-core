@@ -74,7 +74,7 @@ final class CashierFake
     }
 
     /** @internal called by FakeProvider */
-    public function recordRefund(string $connection, string $transactionId, ?int $amount): RefundResult
+    public function recordRefund(string $connection, string $transactionId, ?float $amount): RefundResult
     {
         $this->refunds[] = ['connection' => $connection, 'transaction_id' => $transactionId, 'amount' => $amount];
 

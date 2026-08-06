@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Asciisd\CashierCore\Events;
 
+use Asciisd\CashierCore\Models\Refund;
 use Asciisd\CashierCore\Models\Transaction;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
@@ -17,5 +18,6 @@ class RefundSucceeded
 
     public function __construct(
         public readonly Transaction $transaction,
+        public readonly ?Refund $refund = null,
     ) {}
 }

@@ -168,7 +168,7 @@ class SticpayProvider implements PaymentProcessorInterface, ProvidesWebhookTrans
      * unrefunded remainder), so a partial request has to be refused rather
      * than quietly returning everything.
      */
-    public function refund(string $transactionId, ?int $amount = null): RefundResult
+    public function refund(string $transactionId, ?float $amount = null): RefundResult
     {
         $detail = $this->detailData($transactionId);
 
@@ -215,7 +215,7 @@ class SticpayProvider implements PaymentProcessorInterface, ProvidesWebhookTrans
         );
     }
 
-    public function capture(string $transactionId, ?int $amount = null): PaymentResult
+    public function capture(string $transactionId, ?float $amount = null): PaymentResult
     {
         throw new \BadMethodCallException('Sticpay capture is not supported in the hosted payment flow.');
     }

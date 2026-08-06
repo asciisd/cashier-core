@@ -29,7 +29,7 @@ class ManualProvider implements PaymentProcessorInterface
     /**
      * Process a refund.
      */
-    public function refund(string $transactionId, ?int $amount = null): RefundResult
+    public function refund(string $transactionId, ?float $amount = null): RefundResult
     {
         return new RefundResult(
             success: true,
@@ -77,7 +77,7 @@ class ManualProvider implements PaymentProcessorInterface
         };
     }
 
-    public function capture(string $transactionId, ?int $amount = null): PaymentResult
+    public function capture(string $transactionId, ?float $amount = null): PaymentResult
     {
         throw new \BadMethodCallException('Not supported');
     }

@@ -26,7 +26,7 @@ class FakeConnectionProvider extends AbstractPaymentProcessor
         );
     }
 
-    public function refund(string $transactionId, ?int $amount = null): RefundResult
+    public function refund(string $transactionId, ?float $amount = null): RefundResult
     {
         return new RefundResult(
             success: true,

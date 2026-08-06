@@ -1,5 +1,6 @@
 <?php
 
+use Asciisd\CashierCore\Models\Refund;
 use Asciisd\CashierCore\Models\Transaction;
 
 return [
@@ -64,6 +65,7 @@ return [
     */
     'models' => [
         'transaction' => Transaction::class,
+        'refund' => Refund::class,
         'customer' => null,
     ],
 

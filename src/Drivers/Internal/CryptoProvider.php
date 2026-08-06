@@ -28,7 +28,7 @@ class CryptoProvider implements PaymentProcessorInterface
     /**
      * Process a refund.
      */
-    public function refund(string $transactionId, ?int $amount = null): RefundResult
+    public function refund(string $transactionId, ?float $amount = null): RefundResult
     {
         throw new PaymentProcessingException('Crypto provider does not support automatic refunds');
     }
@@ -65,7 +65,7 @@ class CryptoProvider implements PaymentProcessorInterface
         return false;
     }
 
-    public function capture(string $transactionId, ?int $amount = null): PaymentResult
+    public function capture(string $transactionId, ?float $amount = null): PaymentResult
     {
         throw new \BadMethodCallException('Not supported');
     }

@@ -98,7 +98,7 @@ class RecordingChargeProvider implements PaymentProcessorInterface, PreparesChar
         );
     }
 
-    public function refund(string $transactionId, ?int $amount = null): RefundResult
+    public function refund(string $transactionId, ?float $amount = null): RefundResult
     {
         self::$lastConfig = $this->config;
 
@@ -133,7 +133,7 @@ class RecordingChargeProvider implements PaymentProcessorInterface, PreparesChar
         return false;
     }
 
-    public function capture(string $transactionId, ?int $amount = null): PaymentResult
+    public function capture(string $transactionId, ?float $amount = null): PaymentResult
     {
         throw new BadMethodCallException('Not supported');
     }

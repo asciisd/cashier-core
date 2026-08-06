@@ -16,17 +16,22 @@ use Asciisd\CashierCore\DataObjects\PaymentResult;
 use Asciisd\CashierCore\DataObjects\RefundResult;
 use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
 use Asciisd\CashierCore\Enums\PaymentStatus;
+use Asciisd\CashierCore\Enums\RefundStatus;
 use Asciisd\CashierCore\Enums\TransactionType;
 use Asciisd\CashierCore\Events\ChargeCreated;
+use Asciisd\CashierCore\Events\RefundFailed;
+use Asciisd\CashierCore\Events\RefundSucceeded;
 use Asciisd\CashierCore\Exceptions\InvalidPaymentDataException;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Asciisd\CashierCore\Exceptions\ProcessorNotFoundException;
 use Asciisd\CashierCore\Fees\FeeBreakdown;
 use Asciisd\CashierCore\Fees\FeeCalculator;
 use Asciisd\CashierCore\Logging\PaymentLogger;
+use Asciisd\CashierCore\Models\Refund;
 use Asciisd\CashierCore\Models\Transaction;
 use Asciisd\CashierCore\Services\Webhooks\WebhookProcessor;
 use Asciisd\CashierCore\Support\PayloadSanitizer;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Charge orchestration: resolve the connection, price the deposit, let the
@@ -161,11 +166,24 @@ class PaymentService
     }
 
     /**
-     * Process a refund for a transaction.
+     * Refund a transaction, in whole or in part.
+     *
+     * `$amount` is in major units, matching `transactions.amount` — a partial
+     * refund of 95.50 is `95.5`, not `9550`. Omit it to refund whatever is
+     * still outstanding.
+     *
+     * Every attempt is persisted, so the refunded total is a fact about the
+     * database rather than something each caller has to recompute. Before
+     * this, nothing wrote a refund row at all: a caller summing
+     * `$transaction->refunds()` to decide whether more could be refunded
+     * always read zero, and the same transaction could be refunded
+     * repeatedly.
+     *
+     * @throws PaymentProcessingException when the request exceeds what is left
      */
     public function processRefund(
         string $transactionId,
-        ?int $amount = null,
+        ?float $amount = null,
         ?string $reason = null
     ): RefundResult {
         $model = Cashier::transactionModel();
@@ -176,22 +194,123 @@ class PaymentService
             ->orWhere('id', $transactionId)
             ->firstOrFail();
 
+        // The row is reserved under a lock and the provider is called outside
+        // it. Deciding and reserving in one atomic step is what stops two
+        // concurrent refunds from both seeing the same remaining balance;
+        // holding that lock across a PSP HTTP call would instead block every
+        // webhook for this transaction for the length of the request.
+        $refund = $this->reserveRefund($transaction, $amount, $reason);
+
         try {
             $provider = $this->providerFor($transaction);
-            $result = $provider->refund($transaction->provider_transaction_id, $amount);
-
-            if ($result->isSuccessful()) {
-                PaymentLogger::refundProcessedSuccessfully($transactionId, $result->refundId, $result->amount);
-            } else {
-                PaymentLogger::refundFailed($transactionId, $result->message);
-            }
-
-            return $result;
-
+            $result = $provider->refund($transaction->provider_transaction_id, (float) $refund->amount);
         } catch (PaymentProcessingException $e) {
+            // Release the reservation, or a provider outage would permanently
+            // consume the customer's remaining refundable balance.
+            $this->settleRefund($refund, null);
             PaymentLogger::refundProcessingFailed($transactionId, $e->getMessage());
+
             throw $e;
         }
+
+        $this->settleRefund($refund, $result);
+
+        if ($result->isSuccessful()) {
+            PaymentLogger::refundProcessedSuccessfully($transactionId, $result->refundId, $result->amount);
+            RefundSucceeded::dispatch($transaction, $refund);
+        } else {
+            PaymentLogger::refundFailed($transactionId, $result->message);
+            RefundFailed::dispatch($transaction, $refund);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Claim part of a transaction's refundable balance under a row lock.
+     *
+     * Pending and processing refunds count against the balance as well as
+     * succeeded ones — an in-flight attempt has to hold its share, or two
+     * requests moments apart both pass.
+     *
+     * @throws PaymentProcessingException
+     */
+    private function reserveRefund(Transaction $transaction, ?float $amount, ?string $reason): Refund
+    {
+        $refundModel = Cashier::refundModel();
+
+        return DB::transaction(function () use ($transaction, $amount, $reason, $refundModel): Refund {
+            $model = Cashier::transactionModel();
+
+            /** @var Transaction $locked */
+            $locked = $model::query()
+                ->withoutGlobalScopes($model::cashierBypassedScopes())
+                ->whereKey($transaction->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $charged = round((float) $locked->amount, 2);
+
+            $claimed = round((float) $refundModel::query()
+                ->where('transaction_id', $locked->getKey())
+                ->whereIn('status', [
+                    RefundStatus::Succeeded->value,
+                    RefundStatus::Pending->value,
+                    RefundStatus::Processing->value,
+                ])
+                ->sum('amount'), 2);
+
+            $remaining = round($charged - $claimed, 2);
+
+            if ($remaining <= 0.0) {
+                throw new PaymentProcessingException(
+                    "Transaction [{$locked->getKey()}] is already fully refunded."
+                );
+            }
+
+            $requested = round($amount ?? $remaining, 2);
+
+            if ($requested <= 0.0) {
+                throw new PaymentProcessingException('A refund amount must be greater than zero.');
+            }
+
+            if ($requested > $remaining) {
+                throw new PaymentProcessingException(
+                    "Refund of {$requested} exceeds the {$remaining} still refundable on transaction [{$locked->getKey()}]."
+                );
+            }
+
+            return $refundModel::query()->create([
+                'transaction_id' => $locked->getKey(),
+                'amount' => $requested,
+                'currency' => $locked->currency,
+                'status' => RefundStatus::Pending,
+                'reason' => $reason,
+            ]);
+        });
+    }
+
+    /**
+     * Write the provider's answer onto a reserved refund.
+     *
+     * A null result means the call never produced one — the reservation is
+     * released as failed so it stops holding the balance.
+     */
+    private function settleRefund(Refund $refund, ?RefundResult $result): void
+    {
+        if ($result === null) {
+            $refund->update(['status' => RefundStatus::Failed, 'failed_at' => now()]);
+
+            return;
+        }
+
+        $refund->update([
+            'provider_refund_id' => $result->refundId,
+            'status' => $result->status,
+            'provider_payload' => $result->metadata,
+            'processed_at' => $result->isSuccessful() ? now() : null,
+            'failed_at' => $result->isSuccessful() ? null : now(),
+        ]);
     }
 
     /**

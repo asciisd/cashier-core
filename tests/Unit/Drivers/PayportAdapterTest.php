@@ -68,7 +68,7 @@ it('transforms a paid callback into a succeeded update', function () {
     ]);
 
     expect($update->status)->toBe(PaymentStatus::Succeeded)
-        ->and($update->amount)->toBe(100)
+        ->and($update->amount)->toBe(100.0)
         ->and($update->currency)->toBe('USD')
         ->and($update->errorMessage)->toBeNull()
         ->and($update->metadata['payport_fiat_currency'])->toBe('SAR')

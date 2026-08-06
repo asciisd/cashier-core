@@ -141,7 +141,7 @@ class ApsProvider implements PaymentProcessorInterface, ProvidesWebhookTransacti
         return substr_replace($url, $map[$host], (int) strpos($url, $host), strlen($host));
     }
 
-    public function refund(string $transactionId, ?int $amount = null): RefundResult
+    public function refund(string $transactionId, ?float $amount = null): RefundResult
     {
         $payload = array_filter([
             'reason' => 'Merchant refund',
@@ -165,7 +165,7 @@ class ApsProvider implements PaymentProcessorInterface, ProvidesWebhookTransacti
         );
     }
 
-    public function capture(string $transactionId, ?int $amount = null): PaymentResult
+    public function capture(string $transactionId, ?float $amount = null): PaymentResult
     {
         throw new \BadMethodCallException('APS does not support capture.');
     }

@@ -124,7 +124,7 @@ it('supports refunds and retrievals against the fake', function () {
 
     app(PaymentService::class)->processRefund('fake-tx-r', 50);
 
-    $fake->assertRefunded(fn (array $refund) => $refund['transaction_id'] === 'fake-tx-r' && $refund['amount'] === 50);
+    $fake->assertRefunded(fn (array $refund) => $refund['transaction_id'] === 'fake-tx-r' && $refund['amount'] === 50.0);
 });
 
 it('asserts nothing charged when no charge ran', function () {

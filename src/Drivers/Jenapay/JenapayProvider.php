@@ -98,7 +98,7 @@ class JenapayProvider implements PaymentProcessorInterface, ProvidesWebhookTrans
         ]);
     }
 
-    public function refund(string $transactionId, ?int $amount = null): RefundResult
+    public function refund(string $transactionId, ?float $amount = null): RefundResult
     {
         $status = $this->client->statusByOrderId($transactionId);
         $paymentId = (string) ($status['payment_id'] ?? '');
@@ -130,7 +130,7 @@ class JenapayProvider implements PaymentProcessorInterface, ProvidesWebhookTrans
         );
     }
 
-    public function capture(string $transactionId, ?int $amount = null): PaymentResult
+    public function capture(string $transactionId, ?float $amount = null): PaymentResult
     {
         throw new \BadMethodCallException('Jenapay capture is not supported in the hosted checkout flow.');
     }

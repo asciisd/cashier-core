@@ -29,7 +29,7 @@ final class FakeProvider implements PaymentProcessorInterface
         return $this->fake->recordCharge($this->connection(), $this->driver(), $data);
     }
 
-    public function refund(string $transactionId, ?int $amount = null): RefundResult
+    public function refund(string $transactionId, ?float $amount = null): RefundResult
     {
         return $this->fake->recordRefund($this->connection(), $transactionId, $amount);
     }
@@ -51,7 +51,7 @@ final class FakeProvider implements PaymentProcessorInterface
         return true;
     }
 
-    public function capture(string $transactionId, ?int $amount = null): PaymentResult
+    public function capture(string $transactionId, ?float $amount = null): PaymentResult
     {
         throw new BadMethodCallException('Not supported by the fake provider');
     }
