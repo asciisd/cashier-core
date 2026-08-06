@@ -14,7 +14,11 @@ class TransactionLogger
      */
     protected static function channel(): \Psr\Log\LoggerInterface
     {
-        return Log::channel(config('cashier-core.logging.channel'));
+        $channel = config('cashier-core.logging.channel');
+
+        // See PaymentLogger::channel() — the facade root keeps a host's
+        // `Log::shouldReceive(...)` from returning null through `channel()`.
+        return $channel ? Log::channel($channel) : Log::getFacadeRoot();
     }
 
     // --- Members TransactionController ---

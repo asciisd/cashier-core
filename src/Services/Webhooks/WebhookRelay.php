@@ -55,12 +55,33 @@ class WebhookRelay
             return;
         }
 
-        RelayWebhook::dispatch(
-            $driver,
-            $url,
-            $request->getContent(),
-            (string) $request->header('Content-Type', 'application/json'),
-        );
+        $contentType = (string) $request->header('Content-Type', 'application/json');
+
+        RelayWebhook::dispatch($driver, $url, $this->body($request, $payload, $contentType), $contentType);
+    }
+
+    /**
+     * The bytes to relay: the raw request body, which is what the PSP signed.
+     *
+     * Falls back to re-encoding the parsed payload only when there is no raw
+     * body to forward — relaying an empty body tells the recipient nothing,
+     * and a re-encode they may fail to verify still beats silence. Real PSP
+     * callbacks always carry a body; this is for request objects built from
+     * parameters rather than from the wire.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    private function body(Request $request, array $payload, string $contentType): string
+    {
+        $raw = $request->getContent();
+
+        if ($raw !== '') {
+            return $raw;
+        }
+
+        return str_contains($contentType, 'form-urlencoded')
+            ? http_build_query($payload)
+            : (string) json_encode($payload);
     }
 
     /**

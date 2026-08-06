@@ -103,6 +103,15 @@ class CashierCoreServiceProvider extends ServiceProvider
             'prefix' => config('cashier-core.routes.prefix', 'api/webhooks'),
             'as' => config('cashier-core.routes.name_prefix', 'cashier.webhooks.'),
             'middleware' => config('cashier-core.routes.middleware', ['api']),
+
+            /*
+             * Middleware to strip from the group. A host whose `api` group
+             * already appends its own throttle must drop it here, or that
+             * limiter and the webhook limiter both apply and the tighter one
+             * wins — silently capping PSP retry bursts at the general API
+             * budget, which delays payment settlement.
+             */
+            'excluded_middleware' => (array) config('cashier-core.routes.without_middleware', []),
         ], function () {
             $this->loadRoutesFrom(__DIR__.'/../routes/webhooks.php');
         });

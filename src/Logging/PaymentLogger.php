@@ -13,7 +13,15 @@ class PaymentLogger
      */
     protected static function channel(): LoggerInterface
     {
-        return Log::channel(config('cashier-core.logging.channel'));
+        $channel = config('cashier-core.logging.channel');
+
+        /*
+         * The facade root rather than `Log::channel(null)` when no channel is
+         * configured. They resolve identically in production, but under a
+         * host's `Log::shouldReceive(...)` the unstubbed `channel()` call
+         * returns null and every log line fatals on the return type.
+         */
+        return $channel ? Log::channel($channel) : Log::getFacadeRoot();
     }
 
     // --- PaymentService ---

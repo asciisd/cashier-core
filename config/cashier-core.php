@@ -80,6 +80,13 @@ return [
         'enabled' => env('CASHIER_ROUTES_ENABLED', true),
         'prefix' => env('CASHIER_WEBHOOK_PREFIX', 'api/webhooks'),
         'middleware' => ['api', 'throttle:cashier-webhooks'],
+
+        /*
+         * Middleware to strip from the group. If your `api` group appends its
+         * own throttle, name it here — otherwise it stacks with the webhook
+         * limiter and the tighter of the two wins.
+         */
+        'without_middleware' => [],
         'name_prefix' => 'cashier.webhooks.',
     ],
 

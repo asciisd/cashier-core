@@ -185,3 +185,19 @@ it('retries a failing relay rather than losing it', function () {
     expect($job->tries)->toBe(5)
         ->and($job->backoff())->toBe([10, 30, 60, 300]);
 });
+
+// Real PSP callbacks always carry a body. A request built from parameters
+// rather than from the wire has none, and relaying nothing at all would tell
+// the recipient less than a re-encode they might fail to verify.
+it('re-encodes the payload when the request carries no raw body', function () {
+    $payload = relayCallback('THEIRS-NOBODY');
+
+    $this->call('POST', '/api/webhooks/jenapay', $payload, server: [
+        'CONTENT_TYPE' => 'application/x-www-form-urlencoded',
+    ])->assertOk();
+
+    Queue::assertPushed(
+        RelayWebhook::class,
+        fn (RelayWebhook $job) => $job->body === http_build_query($payload)
+    );
+});
