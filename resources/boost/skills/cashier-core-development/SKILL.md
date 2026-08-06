@@ -289,8 +289,8 @@ would — which is why it is the recovery tool for drivers with no resync endpoi
 ```php
 interface PaymentProcessorInterface {
     public function charge(array $data): PaymentResult;
-    public function refund(string $transactionId, ?int $amount = null): RefundResult;
-    public function capture(string $transactionId, ?int $amount = null): PaymentResult;
+    public function refund(string $transactionId, ?float $amount = null): RefundResult;   // major units
+    public function capture(string $transactionId, ?float $amount = null): PaymentResult; // major units
     public function authorize(array $data): PaymentResult;
     public function void(string $transactionId): PaymentResult;
     public function retrieve(string $transactionId): ?PaymentResult;
@@ -337,7 +337,8 @@ All `readonly` with promoted properties, in `Asciisd\CashierCore\DataObjects`.
 ```php
 new PaymentResult(
     success: bool, transactionId: string, status: PaymentStatus,
-    amount: int, currency: string, message: ?string,
+    amount: int,                   // still int — see the 2.1 note under Refunds
+    currency: string, message: ?string,
     metadata: ?array,              // 'redirect_url' for hosted pages
     processorResponse: mixed, errorCode: ?string,
     paymentMethodSnapshot: ?PaymentMethodSnapshot,
@@ -347,18 +348,27 @@ new TransactionWebhookUpdate(
     status: PaymentStatus, processorResponse: array,
     paymentMethodSnapshot: ?PaymentMethodSnapshot, metadata: ?array,
     errorCode: ?string, errorMessage: ?string,
-    amount: ?int, currency: ?string, description: ?string,
+    amount: ?float,                // float since 2.1, major units
+    currency: ?string, description: ?string,
     additionalAttributes: array,
 );  // carries NO transaction id — correlation is ProvidesWebhookTransactionId's job
 
-new RefundResult(success, refundId, originalTransactionId, status: RefundStatus, amount, currency, message, metadata);
+new RefundResult(
+    success: bool, refundId: string, originalTransactionId: string,
+    status: RefundStatus,
+    amount: float,                 // float since 2.1, major units
+    currency: string, message: ?string, metadata: ?array,
+    processorResponse: ?string, errorCode: ?string,
+);  // isSuccessful() isFailed() toArray()
+
 new LedgerTicket(...);          // returned by FundsLedger movements
 new Actor(...);                 // admin identity for the audit trail
 new Result(...);                // workflow outcome for admin panels
 ```
 
 Note the argument order on `PaymentResult`: `transactionId` comes **before** `status`, and the raw
-payload field is `processorResponse` (not `providerPayload`).
+payload field is `processorResponse` (not `providerPayload`). Mind the mixed units: `PaymentResult`
+carries minor units while `RefundResult` and `TransactionWebhookUpdate` carry major.
 
 ## Enums
 
@@ -462,12 +472,63 @@ check permanently. Either supply credentials or don't declare the connection unt
   ever be credited. Keep the worker `timeout` **below** `queue.connections.*.retry_after`, or a
   killed worker's job is released and the credit path runs twice.
 
-## Known gap: refunds
+## Refunds (2.1)
 
-`PaymentService::processRefund()` returns a `RefundResult` DTO and **nothing writes a `Models\Refund`
-row**; the model's columns also disagree with the package's own refunds migration
-(`processor_refund_id` + cents vs `provider_refund_id` + decimal). Any "already fully refunded"
-guard reading `$transaction->refunds()->sum('amount')` therefore always reads 0, which means an
-admin can refund the same transaction repeatedly. Fixing it needs an amount-units decision
-(`RefundResult::$amount` is `int`; v2 transaction amounts are decimal). Do not build on refund
-persistence until that lands.
+```php
+$result = app(PaymentService::class)->processRefund(
+    $transaction->provider_transaction_id,
+    95.50,              // major units; omit for the outstanding balance
+    'customer request',
+);
+```
+
+`processRefund()` **reserves before it calls out**:
+
+1. Lock the transaction row, sum refunds in `succeeded|pending|processing`, refuse anything
+   exceeding the remainder (or `<= 0`).
+2. Insert a `pending` `Models\Refund` row, then **release the lock** — the PSP call happens outside
+   it, so a slow gateway cannot block webhooks for that transaction.
+3. Write the outcome back. A refusal or a thrown `PaymentProcessingException` marks the row `failed`,
+   which releases the balance again; without that an outage would permanently consume the customer's
+   remaining refundable amount.
+
+In-flight attempts count against the balance, so two requests moments apart cannot both pass.
+`RefundSucceeded` / `RefundFailed` carry the `Refund` as an optional second constructor argument and
+are dispatched from here.
+
+### ⚠️ 2.0 → 2.1 breaking change: refund/capture amounts are `float`
+
+```diff
+-public function refund(string $transactionId, ?int $amount = null): RefundResult
++public function refund(string $transactionId, ?float $amount = null): RefundResult
+
+-public function capture(string $transactionId, ?int $amount = null): PaymentResult
++public function capture(string $transactionId, ?float $amount = null): PaymentResult
+```
+
+`RefundResult::$amount` and `TransactionWebhookUpdate::$amount` widen with them. Units are **major**,
+matching `transactions.amount` — a $95.50 refund is `95.5`. Every bundled driver already cast the int
+to float before sending, so the wire format is unchanged, but the parameter truncated on the way in
+and a $95.50 refund reached the PSP as $95; `TransactionWebhookUpdate::$amount` likewise truncated a
+webhook-reported 95.50 to 95 *before* the OnHold tolerance comparison ran against a decimal column.
+
+Callers passing `int` keep working. **Custom drivers must update their signatures**, and strict
+`toBe(100)` assertions on those properties become `toBe(100.0)`.
+`PaymentResult::$amount` is deliberately still `int` — a wider change for another release.
+
+### `Models\Refund`
+
+Swappable via `cashier-core.models.refund` / `Cashier::refundModel()`; table from
+`database.tables.refunds`. Columns: `transaction_id`, `provider_refund_id`, `amount` (decimal, major
+units), `currency`, `status` (`RefundStatus`), `reason`, `metadata`, `provider_payload`,
+`processed_at`, `failed_at`. Scopes: `successful()`, `failed()`, `pending()`, `byAmount()`,
+`byCurrency()`.
+
+**A host whose `cashier_refunds` table came from a 1.x migration must migrate it** —
+`processor_refund_id` → `provider_refund_id`, `processor_response` → `provider_payload`,
+`id`/`transaction_id` uuid → bigint, `amount` minor → major units. See `UPGRADE-2.1.md`.
+
+> Historical note: in 2.0 nothing wrote a refund row, so
+> `$transaction->refunds()->sum('amount')` — the natural basis for a "can this still be refunded?"
+> guard — always returned 0 and the same transaction could be refunded repeatedly. If a host built
+> such a guard against 2.0, re-read it against 2.1.

@@ -189,16 +189,35 @@ $ledger->assertMoved('credit', fn ($m) => $m['amount'] === 100.0);
 - `SettlementMode` — Added, Deducted, Invoiced.
 - `RefundStatus`, `PaymentMethodType`, `PaymentMethodBrand`.
 
+### Refunds (2.1)
+
+`PaymentService::processRefund($providerTransactionId, ?float $amount, ?string $reason)` reserves
+before it calls out:
+
+1. Lock the transaction row, sum refunds in `succeeded|pending|processing`, and refuse anything
+   exceeding the remainder (or `<= 0`). Omit `$amount` to refund the outstanding balance.
+2. Insert a `pending` `Models\Refund` row and **release the lock** — the PSP call happens outside it,
+   so a slow gateway cannot block webhooks for that transaction.
+3. Write the outcome back. A refusal or a thrown `PaymentProcessingException` marks the row `failed`,
+   releasing the balance — without that, an outage would permanently consume the customer's
+   remaining refundable amount.
+
+In-flight attempts count against the balance, so two requests moments apart cannot both pass.
+`RefundSucceeded` / `RefundFailed` carry the `Refund` and are dispatched from here.
+
+**Amounts are `float`, in major units** matching `transactions.amount` — `refund()` and `capture()`
+take `?float`, and `RefundResult::$amount` / `TransactionWebhookUpdate::$amount` are `float`.
+Custom drivers written against 2.0's `?int` must update their signatures.
+`PaymentResult::$amount` is deliberately still `int`.
+
+`Models\Refund` is swappable via `cashier-core.models.refund` / `Cashier::refundModel()`, and its
+table comes from `database.tables.refunds`. A host whose `cashier_refunds` table came from a 1.x
+migration must migrate it — see `UPGRADE-2.1.md` for the column map.
+
 ### Config
 
-`config/cashier-core.php`: `default_connection`, `connections`, `drivers`, `models`, `routes`,
-`queue` (defaults to the `payments` queue — **the host must run a worker for it**), `currency`,
-`limits`, `settlement`, `withdrawals`, `webhooks` (incl. `relay` per driver), `security`
-(encryption, `redact_keys`, retention), `database`, `logging`.
-
-### Known gap
-
-Refunds do not persist a `Models\Refund` row — `PaymentService::processRefund()` returns a DTO and
-nothing writes the table, whose columns also disagree with the package's own refunds migration.
-Any "already refunded" guard reading `$transaction->refunds()->sum('amount')` therefore always
-reads 0. Do not build on the refund persistence path until it is reconciled.
+`config/cashier-core.php`: `default_connection`, `connections`, `drivers`, `models`
+(`transaction`, `refund`, `customer`), `routes`, `queue` (defaults to the `payments` queue —
+**the host must run a worker for it**), `currency`, `limits`, `settlement`, `withdrawals`,
+`webhooks` (incl. `relay` per driver), `security` (encryption, `redact_keys`, retention),
+`database`, `logging`.
