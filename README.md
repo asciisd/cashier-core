@@ -192,8 +192,10 @@ deposit events and credits the ledger.
 
 - Hosted-redirect drivers only; the sanitizer strips card-shaped keys before
   any payload is persisted (3.2.1, 4.2.1 — SAQ-A preserved).
-- `provider_payload` / `withdrawal_details` are `encrypted:array` casts,
-  toggleable via `cashier-core.security` (3.4.1, 3.5.1).
+- `provider_payload` / `withdrawal_details` are encrypted at rest, toggleable
+  via `cashier-core.security` (3.4.1, 3.5.1). The cast reads cleartext rows too,
+  so a host adopting the engine on an existing table can turn encryption on
+  first and let `cashier:encrypt-historical` catch the back catalogue up.
 - `PayloadRedactor` runs on every logged payload and URL (10.2 log hygiene).
 - `cashier:purge` enforces retention on payloads and replay-guard rows (3.2.1/3.3).
 - Signature verification is non-disableable in production; replay protection
@@ -231,6 +233,7 @@ $ledger->refuseAll();          // simulate a refusing ledger
 | `cashier:check` | Doctor: connections, security posture, indexes, bindings — non-zero exit on failure |
 | `cashier:publish` | Publish config and/or migrations (`--config`, `--migrations`, `--force`) |
 | `cashier:purge` | Enforce payload/webhook-event retention (`--dry-run`) |
+| `cashier:encrypt-historical` | One-off: encrypt + sanitize payloads written before encryption was on (`--dry-run`, `--chunk`, `--column`, `--skip-sanitize`) |
 
 ## License
 

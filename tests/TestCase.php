@@ -25,6 +25,9 @@ abstract class TestCase extends Orchestra
 
     protected function getEnvironmentSetUp($app): void
     {
+        // The encrypted payload casts need a key; testbench ships none.
+        config()->set('app.key', 'base64:'.base64_encode(str_repeat('c', 32)));
+
         config()->set('database.default', 'testing');
         config()->set('database.connections.testing', [
             'driver' => 'sqlite',

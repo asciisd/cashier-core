@@ -108,7 +108,7 @@ class CheckCommand extends Command
             if (config("cashier-core.security.{$flag}", true)) {
                 $this->pass("security.{$flag} is on.");
             } else {
-                $this->postureWarn("security.{$flag} is off — PSP payload PII will be stored in cleartext (PCI DSS 3.4/3.5).");
+                $this->postureWarn("security.{$flag} is off — PSP payload PII will be stored in cleartext (PCI DSS 3.4/3.5). Turn it on, then run `cashier:encrypt-historical` for existing rows.");
             }
         }
     }

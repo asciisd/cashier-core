@@ -126,6 +126,29 @@ majors (core `^2.0`); update them together with the core. Plugin processors
 implement `PreparesChargeData` for their charge-shaping quirks and register
 their driver string in `cashier-core.drivers`.
 
+## Existing cleartext payloads
+
+If your `transactions` table predates the engine, its `provider_payload` /
+`withdrawal_details` rows are cleartext JSON. Two things to do before the
+security flags mean anything:
+
+1. **Widen the columns.** Ciphertext is not valid JSON — a `json` column
+   rejects it outright. The package migration declares both as `text`; a host
+   that created its own table with `json` must alter it first.
+2. **Backfill.** Turn `security.encrypt_provider_payload` /
+   `encrypt_withdrawal_details` on, deploy, then run:
+
+```bash
+php artisan cashier:encrypt-historical --dry-run   # counts, writes nothing
+php artisan cashier:encrypt-historical             # chunked, resumable
+```
+
+Order matters less than it looks: the cast reads cleartext and ciphertext both,
+so traffic is served correctly while the backfill is half done, and the command
+can be interrupted and re-run. `provider_payload` also goes through the storage
+sanitizer on the way (historical rows predate it); `withdrawal_details` does
+not — the host needs those fields to pay the beneficiary.
+
 ## After upgrading
 
 ```bash

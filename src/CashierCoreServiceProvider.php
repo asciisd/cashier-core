@@ -178,6 +178,7 @@ class CashierCoreServiceProvider extends ServiceProvider
                 Console\CheckCommand::class,
                 Console\PublishCommand::class,
                 Console\PurgeCommand::class,
+                Console\EncryptHistoricalCommand::class,
             ]);
         }
     }

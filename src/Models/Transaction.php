@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Asciisd\CashierCore\Models;
 
+use Asciisd\CashierCore\Casts\EncryptedArray;
 use Asciisd\CashierCore\Enums\PaymentStatus;
 use Asciisd\CashierCore\Enums\SettlementMode;
 use Asciisd\CashierCore\Enums\TransactionType;
@@ -189,11 +190,13 @@ class Transaction extends Model
     }
 
     /**
-     * `array` or `encrypted:array` per the security config — encryption at
-     * rest for payloads that may carry PSP-supplied PII (PCI DSS 3.4/3.5).
+     * Encryption at rest for payloads that may carry PSP-supplied PII (PCI DSS
+     * 3.4/3.5). The cast reads the flag per write and accepts legacy cleartext
+     * on read, so a host can flip encryption on before `cashier:encrypt-historical`
+     * has finished rewriting its back catalogue.
      */
     private function encryptedCast(string $flag): string
     {
-        return config("cashier-core.security.{$flag}", true) ? 'encrypted:array' : 'array';
+        return EncryptedArray::class.':'.$flag;
     }
 }

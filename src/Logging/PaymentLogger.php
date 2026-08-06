@@ -762,4 +762,17 @@ class PaymentLogger
             'webhook_event_retention_days' => $eventRetentionDays,
         ]);
     }
+
+    /**
+     * The historical payload backfill ran (PCI DSS 3.4/3.5 audit trail).
+     *
+     * @param  array<string, array{rewritten: int, already: int, failed: int}>  $totals
+     */
+    public static function historicalPayloadsEncrypted(array $totals, bool $sanitized): void
+    {
+        self::channel()->info('Cashier historical payload encryption completed', [
+            'columns' => $totals,
+            'sanitized' => $sanitized,
+        ]);
+    }
 }
