@@ -70,7 +70,15 @@ class ApsAdapter implements PaymentAdapterInterface
             status: $status,
             processorResponse: $payload,
             metadata: $this->metadataFromPayload($inner),
-            errorMessage: $status === PaymentStatus::Failed ? ($inner['external_message'] ?? null) : null,
+            // Carried on Canceled as well as Failed. APS reports a downstream
+            // rejection as fiscal status `canceled` with the PSP's own reason in
+            // `external_message` ("512: Desktop devices are not supported"), and
+            // WebhookProcessor writes error_message on both statuses. Restricting
+            // this to Failed left the customer and support staring at a bare
+            // "Canceled" while the reason sat unread in metadata.
+            errorMessage: in_array($status, [PaymentStatus::Failed, PaymentStatus::Canceled], true)
+                ? ($inner['external_message'] ?? null)
+                : null,
             amount: isset($inner['amount_in']) ? (int) round((float) $inner['amount_in']) : null,
         );
     }

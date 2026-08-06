@@ -90,6 +90,40 @@ describe('fromWebhook', function () {
             ->and($update->errorMessage)->toBe('DECLINED');
     });
 
+    /*
+     * APS reports a downstream rejection as `canceled`, not `failed` — a
+     * device restriction, a risk decline, an unsupported instrument all arrive
+     * this way. Dropping the message there is what made a real desktop-only
+     * Binance Pay rejection reach support as an unexplained "Canceled".
+     */
+    it('carries the provider message on a canceled callback', function () {
+        $update = $this->adapter->fromWebhook([
+            'payload' => [
+                'transaction_id' => '19cd300d-3a31-426b-9f6d-0de9f45a0098',
+                'status' => 'canceled',
+                'external_status' => 'something_went_wrong',
+                'external_message' => '512: Desktop devices are not supported. Please use a mobile device.',
+            ],
+        ]);
+
+        expect($update->status)->toBe(PaymentStatus::Canceled)
+            ->and($update->errorMessage)->toBe('512: Desktop devices are not supported. Please use a mobile device.')
+            ->and($update->metadata['aps_external_message'])->toBe('512: Desktop devices are not supported. Please use a mobile device.');
+    });
+
+    it('leaves errorMessage null while a transaction is still in flight', function () {
+        $update = $this->adapter->fromWebhook([
+            'payload' => [
+                'transaction_id' => 'tx-inflight',
+                'status' => 'pending',
+                'external_message' => 'awaiting sender',
+            ],
+        ]);
+
+        expect($update->status)->toBe(PaymentStatus::Pending)
+            ->and($update->errorMessage)->toBeNull();
+    });
+
     it('falls back to sep31_status when fiscal status is absent', function () {
         $update = $this->adapter->fromWebhook([
             'payload' => [
