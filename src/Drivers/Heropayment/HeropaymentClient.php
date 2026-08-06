@@ -23,7 +23,7 @@ class HeropaymentClient
     ) {}
 
     /**
-     * Build a client from a `transactions.providers.heropayment` config array.
+     * Build a client from a `cashier-core.connections.heropayment` config array.
      *
      * @param  array<string, mixed>  $config
      */

@@ -81,7 +81,7 @@ final class HeropaymentQuoteService
     public function quote(float $amount, string $payCurrency, ?string $priceCurrency = null): HeropaymentQuote
     {
         $payCurrency = strtolower($payCurrency);
-        $priceCurrency = strtolower($priceCurrency ?? (string) config('transactions.currency.default', 'USD'));
+        $priceCurrency = strtolower($priceCurrency ?? (string) config('cashier-core.currency.default', 'USD'));
 
         $rate = $this->rate($priceCurrency, $payCurrency);
 

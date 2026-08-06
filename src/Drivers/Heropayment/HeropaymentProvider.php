@@ -46,7 +46,7 @@ class HeropaymentProvider implements PaymentProcessorInterface, ProvidesWebhookT
         $validated = $this->validatePaymentData($data);
 
         $externalOrderId = $data['external_id'] ?? 'DEP-'.Str::ulid();
-        $currency = strtolower((string) ($data['currency'] ?? config('transactions.currency.default', 'USD')));
+        $currency = strtolower((string) ($data['currency'] ?? config('cashier-core.currency.default', 'USD')));
 
         $body = array_filter([
             'priceCurrency' => $currency,

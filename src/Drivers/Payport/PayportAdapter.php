@@ -29,7 +29,7 @@ class PayportAdapter implements PaymentAdapterInterface
             transactionId: (string) $response['order_id'],
             status: PaymentStatus::Pending,
             amount: $this->wholeUnits($response['amount_currency'] ?? null) ?? 0,
-            currency: (string) ($response['currency'] ?? config('transactions.currency.default', 'USD')),
+            currency: (string) ($response['currency'] ?? config('cashier-core.currency.default', 'USD')),
             metadata: array_filter([
                 'redirect_url' => $response['url'] ?? null,
                 'payport_invoice_id' => $response['invoice_id'] ?? null,
@@ -54,7 +54,7 @@ class PayportAdapter implements PaymentAdapterInterface
             transactionId: $transactionId,
             status: $status,
             amount: $this->wholeUnits($invoice['amount_currency'] ?? null) ?? 0,
-            currency: (string) ($invoice['currency'] ?? config('transactions.currency.default', 'USD')),
+            currency: (string) ($invoice['currency'] ?? config('cashier-core.currency.default', 'USD')),
             message: isset($payload['message']) ? (string) $payload['message'] : null,
             metadata: $this->metadataFromPayload($payload + $invoice),
             processorResponse: $payload,

@@ -25,7 +25,7 @@ class ApsAdapter implements PaymentAdapterInterface
             transactionId: (string) $response['id'],
             status: PaymentStatus::Pending,
             amount: $amount,
-            currency: (string) ($response['currency'] ?? config('transactions.currency.default', 'USD')),
+            currency: (string) ($response['currency'] ?? config('cashier-core.currency.default', 'USD')),
             metadata: array_filter([
                 'redirect_url' => $response['how'] ?? null,
                 'aps_external_id' => $response['external_id'] ?? null,
@@ -50,7 +50,7 @@ class ApsAdapter implements PaymentAdapterInterface
             transactionId: $transactionId,
             status: $status,
             amount: (int) round((float) ($payload['amount_in'] ?? $payload['amount'] ?? 0)),
-            currency: (string) ($payload['currency'] ?? config('transactions.currency.default', 'USD')),
+            currency: (string) ($payload['currency'] ?? config('cashier-core.currency.default', 'USD')),
             message: $payload['external_message'] ?? null,
             metadata: $this->metadataFromPayload($payload),
             processorResponse: $payload,

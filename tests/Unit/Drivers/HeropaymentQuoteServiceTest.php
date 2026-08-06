@@ -9,11 +9,11 @@ use Illuminate\Support\Facades\Http;
 beforeEach(function () {
     Cache::flush();
 
-    config()->set('transactions.currency.default', 'USD');
-    config()->set('transactions.providers.heropayment.base_url', 'https://hero.test');
-    config()->set('transactions.providers.heropayment.api_key', 'test-key');
-    config()->set('transactions.providers.heropayment.api_secret', 'test-secret');
-    config()->set('transactions.providers.heropayment.fee_percent', 0.5);
+    config()->set('cashier-core.currency.default', 'USD');
+    config()->set('cashier-core.connections.heropayment.base_url', 'https://hero.test');
+    config()->set('cashier-core.connections.heropayment.api_key', 'test-key');
+    config()->set('cashier-core.connections.heropayment.api_secret', 'test-secret');
+    config()->set('cashier-core.connections.heropayment.fee_percent', 0.5);
 });
 
 function fakeHeroLookups(array $overrides = []): void
@@ -46,7 +46,7 @@ function fakeHeroLookups(array $overrides = []): void
 
 function heroQuoteService(): HeropaymentQuoteService
 {
-    $config = (array) config('transactions.providers.heropayment');
+    $config = (array) config('cashier-core.connections.heropayment');
 
     return new HeropaymentQuoteService(HeropaymentClient::fromConfig($config), $config);
 }
@@ -140,7 +140,7 @@ it('caches lookups so a deposit screen does not re-hit the provider', function (
 });
 
 it('omits the provider fee when none is configured', function () {
-    config()->set('transactions.providers.heropayment.fee_percent', null);
+    config()->set('cashier-core.connections.heropayment.fee_percent', null);
     fakeHeroLookups();
 
     $quote = heroQuoteService()->quote(100.0, 'usdttrc20');

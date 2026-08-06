@@ -26,7 +26,7 @@ class JenapayAdapter implements PaymentAdapterInterface
             transactionId: (string) $response['order_number'],
             status: PaymentStatus::Pending,
             amount: (int) round((float) ($response['order_amount'] ?? 0)),
-            currency: (string) ($response['order_currency'] ?? config('transactions.currency.default', 'USD')),
+            currency: (string) ($response['order_currency'] ?? config('cashier-core.currency.default', 'USD')),
             metadata: array_filter([
                 'redirect_url' => $response['redirect_url'] ?? null,
                 'jenapay_order_number' => $response['order_number'] ?? null,
@@ -47,7 +47,7 @@ class JenapayAdapter implements PaymentAdapterInterface
             transactionId: $transactionId,
             status: $status,
             amount: (int) round((float) ($payload['order']['amount'] ?? $payload['order_amount'] ?? 0)),
-            currency: (string) ($payload['order']['currency'] ?? $payload['order_currency'] ?? config('transactions.currency.default', 'USD')),
+            currency: (string) ($payload['order']['currency'] ?? $payload['order_currency'] ?? config('cashier-core.currency.default', 'USD')),
             message: $payload['reason'] ?? null,
             metadata: $this->metadataFromPayload($payload),
             processorResponse: $payload,

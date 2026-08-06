@@ -26,7 +26,7 @@ class HeropaymentAdapter implements PaymentAdapterInterface
             transactionId: (string) $response['id'],
             status: PaymentStatus::Pending,
             amount: (int) round((float) ($response['priceAmount'] ?? 0)),
-            currency: strtoupper((string) ($response['priceCurrency'] ?? config('transactions.currency.default', 'USD'))),
+            currency: strtoupper((string) ($response['priceCurrency'] ?? config('cashier-core.currency.default', 'USD'))),
             metadata: array_filter([
                 'redirect_url' => $response['invoiceUrl'] ?? null,
                 'heropayment_external_order_id' => $response['externalOrderId'] ?? null,
@@ -48,7 +48,7 @@ class HeropaymentAdapter implements PaymentAdapterInterface
             transactionId: $transactionId,
             status: $status,
             amount: (int) round((float) ($payload['priceAmount'] ?? 0)),
-            currency: strtoupper((string) ($payload['priceCurrency'] ?? config('transactions.currency.default', 'USD'))),
+            currency: strtoupper((string) ($payload['priceCurrency'] ?? config('cashier-core.currency.default', 'USD'))),
             metadata: $this->metadataFromPayload($payload),
             processorResponse: $payload,
             paymentMethodSnapshot: $this->cryptoSnapshot($payload),

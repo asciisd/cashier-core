@@ -56,7 +56,7 @@ class JenapayProvider implements PaymentProcessorInterface, ProvidesWebhookTrans
 
         $orderNumber = $data['order_number'] ?? 'DEP-'.Str::ulid();
         $amount = number_format((float) $validated['amount'], 2, '.', '');
-        $currency = (string) ($data['currency'] ?? config('transactions.currency.default', 'USD'));
+        $currency = (string) ($data['currency'] ?? config('cashier-core.currency.default', 'USD'));
         $description = (string) ($data['description'] ?? "Deposit {$orderNumber}");
 
         $body = [
@@ -124,7 +124,7 @@ class JenapayProvider implements PaymentProcessorInterface, ProvidesWebhookTrans
             originalTransactionId: $transactionId,
             status: $accepted ? RefundStatus::Pending : RefundStatus::Failed,
             amount: $amount ?? (int) round((float) $refundAmount),
-            currency: (string) ($status['order']['currency'] ?? config('transactions.currency.default', 'USD')),
+            currency: (string) ($status['order']['currency'] ?? config('cashier-core.currency.default', 'USD')),
             message: $response['reason'] ?? null,
             metadata: $response,
         );

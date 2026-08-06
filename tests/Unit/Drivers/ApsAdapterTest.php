@@ -101,3 +101,18 @@ describe('fromWebhook', function () {
         expect($update->status)->toBe(PaymentStatus::Processing);
     });
 });
+
+/*
+ * The engine used to read the HOST app's `transactions.currency.default` here.
+ * It happened to hold 'USD' in the app the code was extracted from, so the
+ * coupling was invisible — any other host would have had its configured
+ * currency silently ignored in favour of the literal default.
+ */
+it('takes the currency default from the package config, not a host config file', function () {
+    config()->set('cashier-core.currency.default', 'EUR');
+    config()->set('transactions.currency.default', 'JPY');
+
+    $result = $this->adapter->fromProviderResponse(['id' => 'tx-3', 'amount' => 10]);
+
+    expect($result->currency)->toBe('EUR');
+});

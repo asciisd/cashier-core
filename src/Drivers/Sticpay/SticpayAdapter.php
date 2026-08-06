@@ -65,7 +65,7 @@ class SticpayAdapter implements PaymentAdapterInterface
             transactionId: (string) $response['order_no'],
             status: PaymentStatus::Pending,
             amount: $this->wholeUnits($response['order_amount'] ?? null) ?? 0,
-            currency: (string) ($response['order_currency'] ?? config('transactions.currency.default', 'USD')),
+            currency: (string) ($response['order_currency'] ?? config('cashier-core.currency.default', 'USD')),
             metadata: array_filter([
                 'redirect_url' => $response['link'] ?? null,
                 // The PAY link dies after five minutes. Nothing offers it as a
@@ -91,7 +91,7 @@ class SticpayAdapter implements PaymentAdapterInterface
             transactionId: $transactionId,
             status: $status,
             amount: $this->wholeUnits($payload['from_amount'] ?? null) ?? 0,
-            currency: (string) ($payload['from_currency'] ?? config('transactions.currency.default', 'USD')),
+            currency: (string) ($payload['from_currency'] ?? config('cashier-core.currency.default', 'USD')),
             message: isset($payload['message']) ? (string) $payload['message'] : null,
             metadata: $this->metadataFromPayload($payload),
             processorResponse: $payload,

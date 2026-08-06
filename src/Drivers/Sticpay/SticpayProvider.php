@@ -98,7 +98,7 @@ class SticpayProvider implements PaymentProcessorInterface, ProvidesWebhookTrans
          * USD needs its currency pinned here.
          */
         $currency = (string) (($this->config['currency'] ?? null)
-            ?: ($data['currency'] ?? config('transactions.currency.default', 'USD')));
+            ?: ($data['currency'] ?? config('cashier-core.currency.default', 'USD')));
 
         /*
          * Fixed-2 string, matching the vendor's "125.03". The signature is
@@ -207,7 +207,7 @@ class SticpayProvider implements PaymentProcessorInterface, ProvidesWebhookTrans
             originalTransactionId: $transactionId,
             status: RefundStatus::Succeeded,
             amount: (int) round($settled),
-            currency: (string) ($detail['from_currency'] ?? config('transactions.currency.default', 'USD')),
+            currency: (string) ($detail['from_currency'] ?? config('cashier-core.currency.default', 'USD')),
             message: isset($response['message']) ? (string) $response['message'] : null,
             // RefundResult::$processorResponse is a ?string, so the raw response
             // travels as metadata instead.

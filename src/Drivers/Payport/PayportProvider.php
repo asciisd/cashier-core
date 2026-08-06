@@ -88,7 +88,7 @@ class PayportProvider implements PaymentProcessorInterface, ProvidesWebhookTrans
          * {@see currency2currency below}
          */
         $currency = (string) (($this->config['currency'] ?? null)
-            ?: ($data['currency'] ?? config('transactions.currency.default', 'USD')));
+            ?: ($data['currency'] ?? config('cashier-core.currency.default', 'USD')));
 
         $body = array_filter([
             'order_id' => $orderId,

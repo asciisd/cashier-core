@@ -34,7 +34,7 @@ class ApsProvider implements PaymentProcessorInterface, ProvidesWebhookTransacti
      * APS issues a separate account — own GUID, app key and callback secret —
      * per product, and Binance Pay is not reachable with the card account's
      * credentials. Each account is its own connection in
-     * `config('transactions.providers')`, so the account is chosen by which
+     * `config('cashier-core.connections')`, so the account is chosen by which
      * connection a payment method names rather than by anything in here.
      */
     public function __construct(array $config = [])
@@ -108,7 +108,7 @@ class ApsProvider implements PaymentProcessorInterface, ProvidesWebhookTransacti
             transactionId: $result->transactionId,
             status: $result->status,
             amount: (int) $validated['amount'],
-            currency: (string) ($data['currency'] ?? config('transactions.currency.default', 'USD')),
+            currency: (string) ($data['currency'] ?? config('cashier-core.currency.default', 'USD')),
             message: $result->message,
             metadata: $metadata,
             processorResponse: $result->processorResponse,
@@ -159,7 +159,7 @@ class ApsProvider implements PaymentProcessorInterface, ProvidesWebhookTransacti
             originalTransactionId: $transactionId,
             status: $success ? RefundStatus::Succeeded : RefundStatus::Failed,
             amount: $amount ?? 0,
-            currency: config('transactions.currency.default', 'USD'),
+            currency: config('cashier-core.currency.default', 'USD'),
             message: $body['external_message'] ?? null,
             metadata: $body,
         );
