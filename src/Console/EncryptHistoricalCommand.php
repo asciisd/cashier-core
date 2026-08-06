@@ -133,7 +133,9 @@ class EncryptHistoricalCommand extends Command
         }
 
         if ($sanitize && $column === 'provider_payload') {
-            $decoded = $sanitizer->forStorage((string) $row->provider, $decoded);
+            // Raw, not cast: hosts routinely cast `provider` to their own
+            // display enum, which has no string conversion.
+            $decoded = $sanitizer->forStorage((string) $row->getRawOriginal('provider'), $decoded);
         }
 
         if ($dryRun) {

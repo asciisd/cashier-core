@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Asciisd\CashierCore\Enums\PaymentStatus;
 use Asciisd\CashierCore\Enums\TransactionType;
 use Asciisd\CashierCore\Models\Transaction;
+use Asciisd\CashierCore\Tests\Fixtures\HostTransaction;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 
@@ -170,6 +171,23 @@ it('reports a damaged value and leaves it untouched instead of aborting the run'
 
     expect(rawValue($damaged, 'provider_payload'))->toBe('neither-json-nor-ciphertext')
         ->and($healthy->fresh()->provider_payload)->toBe(['order_id' => 'A1', 'email' => '[redacted]']);
+});
+
+/*
+ * Found against real data: the sanitizer needs the driver string, and reading
+ * it through the model handed back the host's display enum instead.
+ */
+it('sanitizes rows whose host model casts provider to an enum', function () {
+    $transaction = legacyTransaction();
+
+    config()->set('cashier-core.models.transaction', HostTransaction::class);
+
+    $this->artisan('cashier:encrypt-historical')->assertSuccessful();
+
+    expect(HostTransaction::query()->find($transaction->id)->provider_payload)->toBe([
+        'order_id' => 'A1',
+        'email' => '[redacted]',
+    ]);
 });
 
 it('covers soft-deleted rows — a deleted transaction still holds the payload', function () {
