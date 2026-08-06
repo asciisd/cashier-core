@@ -188,10 +188,21 @@ class PaymentService
     ): RefundResult {
         $model = Cashier::transactionModel();
 
+        /*
+         * Scopes off, and the two identifiers grouped.
+         *
+         * A refund is issued by an operator, not by the account holder, so a
+         * host tenant scope would hide the row. And the alternation has to be
+         * parenthesised: `where(a)->orWhere(b)` under a global scope compiles
+         * to `scope AND a OR b`, so the `b` branch escapes the scope entirely
+         * and could match another customer's transaction.
+         */
         /** @var Transaction $transaction */
         $transaction = $model::query()
-            ->where('provider_transaction_id', $transactionId)
-            ->orWhere('id', $transactionId)
+            ->withoutGlobalScopes($model::cashierBypassedScopes())
+            ->where(fn ($query) => $query
+                ->where('provider_transaction_id', $transactionId)
+                ->orWhere('id', $transactionId))
             ->firstOrFail();
 
         // The row is reserved under a lock and the provider is called outside

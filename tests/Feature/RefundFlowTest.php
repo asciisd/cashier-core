@@ -273,3 +273,17 @@ class RefundingProvider implements PaymentProcessorInterface
         return $data;
     }
 }
+
+/*
+ * A refund is issued by an operator, not the account holder, so a host tenant
+ * scope must not hide the transaction — and the two identifiers have to be
+ * grouped: `where(a)->orWhere(b)` under a global scope compiles to
+ * `scope AND a OR b`, letting the `b` branch match outside the scope.
+ */
+it('finds the transaction by id as well as provider id, without escaping scopes', function () {
+    $transaction = refundableTransaction(100.0);
+
+    app(PaymentService::class)->processRefund((string) $transaction->id, 10.0);
+
+    expect((float) Refund::query()->where('transaction_id', $transaction->id)->sum('amount'))->toBe(10.0);
+});
