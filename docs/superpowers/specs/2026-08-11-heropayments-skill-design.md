@@ -131,14 +131,16 @@ loads only when relevant.
 
 The overview arrives as one 41k-char blob, but webhook work — the most common
 reason to open this skill — needs only its callback half. The generator splits
-it at the `Callbacks` heading and stops at `Payment Statuses - (V2 flow)`,
-emitting the head and tail into `overview.md` and the middle into
-`callbacks.md`.
+it at the heading carrying `id="callbacks"` and stops at the one carrying
+`id="payment-statuses-v2-flow"`, emitting the head and tail into `overview.md`
+and the middle into `callbacks.md`.
 
-That is a dependency on two heading names, which is the one fragile thing in the
-pipeline. `SOURCES.md` records both boundary headings, and the verify script
-asserts each file is non-empty and carries its expected anchor content — so a
-renamed heading fails loudly rather than silently emptying a file.
+Matching on the heading `id` rather than its visible text is deliberate: the
+ids are slugs in the source HTML and survive changes to capitalisation,
+punctuation and wording. It is still a dependency on two upstream identifiers —
+the one fragile thing in the pipeline — so the generator exits non-zero when
+either is missing rather than silently emitting an empty file, and `SOURCES.md`
+records both.
 
 ### Mirror generation
 
@@ -166,7 +168,27 @@ Postman's descriptions are hand-written HTML and carry the usual artefacts —
 smart quotes in field names (`"userNotes"`), a comma for a decimal point
 (`"networkFee": 0,5`), and typos. These are reproduced as-is. A mirror that
 silently corrects its source stops being a mirror, and `quirks.md` is where
-corrections belong.
+corrections belong. The same applies to request bodies, several of which are
+truncated mid-object in the source and are not parseable JSON; they are emitted
+verbatim rather than repaired.
+
+### The one thing that is not reproduced verbatim
+
+Four saved responses are bulk data lists rather than examples of contract
+shape — every supported cryptocurrency (1,631 lines), every Custody minimum
+(677), every supported fiat (275), every Custody balance (100). Verbatim they
+are 2,683 of the collection's 2,986 response-body lines, and they re-diff on
+every coin listing, burying real contract changes in noise. The driver reads
+all four from the live API at runtime and caches them
+(`HeropaymentQuoteService.php:42-74, 140-171`), so the mirrored copy is stale
+the day it lands.
+
+Response bodies are therefore capped at 60 lines, with the elision marked in
+place and naming its cause. The cap sits above the longest genuine payload
+example (42 lines), so no example of contract shape is ever cut — the rule only
+ever fires on repeated data rows. This is the sole departure from verbatim
+mirroring, and the verify script asserts the elision count so it cannot spread
+silently.
 
 ### `quirks.md`
 
@@ -301,11 +323,17 @@ The work is done when all of the following hold:
    does not contain.
 4. `overview.md` retains all five signing samples — PHP, Python, Node, C#,
    browser — and both Postman pre-request scripts.
-5. `errors.md` holds both tables at full row count, V2 and Custody.
-6. `grep -c '^<[a-z]'` returns 0 for every file in `references/`.
-7. Every `quirks.md` citation resolves to a real line, checked by opening each
+5. `errors.md` holds both tables at full row count — 25 V2 rows, 24 Custody.
+6. No raw HTML survives conversion: `grep -cE '^<[a-z]+[ />]'` returns 0 for
+   every file in `references/`. The trailing character class is required —
+   pandoc emits GFM autolinks (`<https://api.heropayments.io/v2/rate>`), and the
+   looser `^<[a-z]` used by the APS skill matches four of them as false
+   positives.
+7. Exactly four capped response bodies remain, two in `v2.md` and two in
+   `custody.md`, each carrying its elision marker.
+8. Every `quirks.md` citation resolves to a real line, checked by opening each
    reference.
-8. The regenerate and verify scripts in `SOURCES.md` both run clean from the
+9. The regenerate and verify scripts in `SOURCES.md` both run clean from the
    repo root.
 
 Points 2 to 5 are the ones that matter most: a mirror that silently drops a
