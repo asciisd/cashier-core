@@ -9,6 +9,33 @@ beforeEach(function () {
     $this->adapter = new ApsAdapter;
 });
 
+/**
+ * A real completed APS deposit under `settlement_mode: added` (production txn
+ * 688): a 100.00 order, APS's own 6.25 customer fee added at checkout, 106.25
+ * debited, 100.00 settled.
+ *
+ * @return array<string, mixed>
+ */
+function apsCompletedDepositCallback(): array
+{
+    return [
+        'payload' => [
+            'id' => 'd540c361-0b03-4f14-902b-c69da1b98014',
+            'transaction_id' => 'd540c361-0b03-4f14-902b-c69da1b98014',
+            'external_id' => 'DEP-01KZQX1SR2TE7WPP53M0R4X6Z3',
+            'status' => 'completed',
+            'fiscal_status' => 'done',
+            'amount' => 100,
+            'amount_in' => 106.25,
+            'amount_out' => 100,
+            'amount_fee' => 6.25,
+            'amount_body' => 100,
+            'customer_fee' => 6.25,
+            'merchant_fee' => 0,
+        ],
+    ];
+}
+
 describe('mapStatus', function () {
     it('maps success statuses to Succeeded', function () {
         expect($this->adapter->mapStatus('done'))->toBe(PaymentStatus::Succeeded);
@@ -101,6 +128,25 @@ describe('fromProviderResponse', function () {
     });
 });
 
+describe('fromProviderPayload', function () {
+    /*
+     * The retrieve path had the same inverted preference as the callback path.
+     * Nothing compares this figure against the invoice today — sync omits the
+     * amount from its update — but the two paths read the same payload and must
+     * not disagree about which field the transaction was for.
+     */
+    it('reports the order amount, not the customer debit including APS fees', function () {
+        $result = $this->adapter->fromProviderPayload(
+            'd540c361-0b03-4f14-902b-c69da1b98014',
+            apsCompletedDepositCallback(),
+        );
+
+        expect($result->status)->toBe(PaymentStatus::Succeeded)
+            ->and($result->amount)->toBe(100)
+            ->and($result->metadata['aps_amount_in'])->toBe(106.25);
+    });
+});
+
 describe('fromWebhook', function () {
     it('unwraps the nested payload key and maps a completed deposit', function () {
         $update = $this->adapter->fromWebhook([
@@ -109,6 +155,7 @@ describe('fromWebhook', function () {
                 'sep31_status' => 'completed',
                 'status' => 'done',
                 'refunded' => false,
+                'amount' => 500,
                 'amount_in' => 500,
                 'amount_out' => 475.5,
                 'external_message' => 'APPROVED',
@@ -120,6 +167,44 @@ describe('fromWebhook', function () {
             ->and($update->amount)->toBe(500.0)
             ->and($update->metadata['aps_transaction_id'])->toBe('b829f009-afe0-45c2-9996-8941f80bcb0e')
             ->and($update->errorMessage)->toBeNull();
+    });
+
+    /*
+     * The production callback for txn 688, verbatim. APS collected the 100.00
+     * order, added its own 6.25 customer fee at checkout, debited the customer
+     * 106.25 and settled 100.00 to us. `amount` is the order — the same basis
+     * as `transactions.requested_amount`, which WebhookProcessor compares the
+     * reported figure against. Reporting `amount_in` instead put every
+     * `settlement_mode: added` deposit 6.25% outside the tolerance band and
+     * held it for review.
+     */
+    it('reports the order amount, not the customer debit including APS fees', function () {
+        $update = $this->adapter->fromWebhook(apsCompletedDepositCallback());
+
+        expect($update->status)->toBe(PaymentStatus::Succeeded)
+            ->and($update->amount)->toBe(100.0)
+            // The customer's debit and the merchant settlement stay reachable —
+            // `aps_amount_out` is what the fee-drift check reads.
+            ->and($update->metadata['aps_amount_in'])->toBe(106.25)
+            ->and($update->metadata['aps_amount_out'])->toBe(100);
+    });
+
+    /*
+     * No amount means no amount assertion (WebhookProcessor short-circuits on
+     * null). Falling back to `amount_in` here would reinstate the bug on any
+     * callback shape that omits the order figure.
+     */
+    it('reports no amount at all rather than falling back to the customer debit', function () {
+        $update = $this->adapter->fromWebhook([
+            'payload' => [
+                'transaction_id' => 'tx-no-order-amount',
+                'status' => 'done',
+                'amount_in' => 106.25,
+            ],
+        ]);
+
+        expect($update->status)->toBe(PaymentStatus::Succeeded)
+            ->and($update->amount)->toBeNull();
     });
 
     it('handles a flat (non-nested) payload and failed status with message', function () {

@@ -94,8 +94,8 @@ copies `external_message` into `error_message`, and dispatches
 `DepositFailed`. That is the established convention for a refund here, but it
 means a refund can land with a non-error string in `error_message`.
 
-`src/Drivers/Aps/ApsAdapter.php:86-122`, `src/Drivers/Aps/ApsAdapter.php:43-46`,
-`src/Drivers/Aps/ApsAdapter.php:64-67`, `src/Drivers/Aps/ApsAdapter.php:129-144`
+`src/Drivers/Aps/ApsAdapter.php:101-137`, `src/Drivers/Aps/ApsAdapter.php:43-46`,
+`src/Drivers/Aps/ApsAdapter.php:68-71`, `src/Drivers/Aps/ApsAdapter.php:144-159`
 
 ## 7. A downstream rejection arrives as `canceled`, not `failed`
 
@@ -105,22 +105,35 @@ supported"`. Treating only `failed` as carrying an error message left customers
 and support staring at a bare "Canceled" while the reason sat unread in
 metadata. The error message is carried on both statuses.
 
-`src/Drivers/Aps/ApsAdapter.php:60-84`, commit `3fe3673`
+`src/Drivers/Aps/ApsAdapter.php:68-85`, commit `3fe3673`
 
 ## 8. Callback payloads nest under a top-level `payload` key
 
 Status callbacks wrap everything in `payload`. Retrieve responses may or may
 not, so both paths unwrap defensively with `$payload['payload'] ?? $payload`.
 
-`src/Drivers/Aps/ApsAdapter.php:43-46`, `src/Drivers/Aps/ApsAdapter.php:64-67`
+`src/Drivers/Aps/ApsAdapter.php:43-46`, `src/Drivers/Aps/ApsAdapter.php:68-71`
 
 ## 9. Money and checkout field names
 
-`amount_in` is what the customer pays, `amount_out` what the merchant receives,
-`customer_fee` the end-user's share. The hosted checkout URL is `how` — not
-`url`, `link`, or `redirect_url`.
+A payload carries four amounts and they are all different under `added`
+settlement: `amount` is the order we asked APS to collect, `amount_in` what the
+customer is debited (the order **plus** APS's own `customer_fee`, charged at
+checkout), `amount_out` what the merchant receives, `customer_fee` the end
+user's share. The hosted checkout URL is `how` — not `url`, `link`, or
+`redirect_url`.
 
-`src/Drivers/Aps/ApsAdapter.php:18-38`
+**Only `amount` may be reported as the update amount.** `WebhookProcessor`
+compares it against `transactions.requested_amount` — what we sent the PSP —
+inside a 1% tolerance. Reporting `amount_in` put every `settlement_mode: added`
+deposit exactly one PSP fee outside that band (6.25% in production), so no APS
+deposit was ever credited by its own callback; each sat in `on_hold` until an
+operator ran the sync action, which omits the amount and therefore never trips
+the guard. `amount_out` still reaches the fee-drift check through the
+`aps_amount_out` metadata key.
+
+`src/Drivers/Aps/ApsAdapter.php:18-38`, `src/Drivers/Aps/ApsAdapter.php:52-56`,
+`src/Drivers/Aps/ApsAdapter.php:86-97`
 
 ## 10. Two environments, separate credentials
 

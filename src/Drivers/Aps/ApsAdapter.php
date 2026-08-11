@@ -49,7 +49,11 @@ class ApsAdapter implements PaymentAdapterInterface
             success: $status === PaymentStatus::Succeeded,
             transactionId: $transactionId,
             status: $status,
-            amount: (int) round((float) ($payload['amount_in'] ?? $payload['amount'] ?? 0)),
+            // The order, not the customer's debit — see `fromWebhook()`. Nothing
+            // compares this figure against the invoice (sync omits the amount
+            // from its update), but both paths read the same payload and must
+            // not disagree about what the transaction was for.
+            amount: (int) round((float) ($payload['amount'] ?? $payload['amount_in'] ?? 0)),
             currency: (string) ($payload['currency'] ?? config('cashier-core.currency.default', 'USD')),
             message: $payload['external_message'] ?? null,
             metadata: $this->metadataFromPayload($payload),
@@ -79,7 +83,18 @@ class ApsAdapter implements PaymentAdapterInterface
             errorMessage: in_array($status, [PaymentStatus::Failed, PaymentStatus::Canceled], true)
                 ? ($inner['external_message'] ?? null)
                 : null,
-            amount: isset($inner['amount_in']) ? (int) round((float) $inner['amount_in']) : null,
+            // APS's `amount` is what we asked it to collect — the same basis as
+            // `transactions.requested_amount`, which WebhookProcessor compares
+            // this against. `amount_in` is the customer's debit *including* APS's
+            // own customer fee, so reporting it put every `settlement_mode: added`
+            // deposit outside the tolerance band and held it for review. The
+            // merchant settlement (`amount_out`) reaches the fee-drift check
+            // through the `aps_amount_out` metadata key instead.
+            //
+            // Left null when APS omits the order figure: the guard skips a null
+            // amount, and falling back to `amount_in` would reinstate the bug.
+            // Not rounded — the field is `?float` and APS quotes cents.
+            amount: isset($inner['amount']) ? (float) $inner['amount'] : null,
         );
     }
 

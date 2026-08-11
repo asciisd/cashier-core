@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 use Asciisd\CashierCore\Contracts\FundsLedger;
 use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
+use Asciisd\CashierCore\Drivers\Aps\ApsAdapter;
 use Asciisd\CashierCore\Enums\PaymentStatus;
 use Asciisd\CashierCore\Enums\TransactionType;
 use Asciisd\CashierCore\Events\DepositHeldForReview;
 use Asciisd\CashierCore\Events\DepositSucceeded;
+use Asciisd\CashierCore\Events\FeeDriftDetected;
 use Asciisd\CashierCore\Events\FundsCredited;
 use Asciisd\CashierCore\Events\TransactionStatusChanged;
 use Asciisd\CashierCore\Models\Transaction;
@@ -37,6 +39,31 @@ function processorDeposit(array $overrides = []): Transaction
         'currency' => 'USD',
         'metadata' => ['trading_account_login' => 70001],
     ], $overrides));
+}
+
+/**
+ * A completed APS callback for a `settlement_mode: added` deposit (production
+ * txn 688): a 100.00 order, APS's own 6.25 customer fee added at checkout,
+ * 106.25 debited from the customer, 100.00 settled to the merchant.
+ *
+ * @param  array<string, mixed>  $overrides
+ * @return array<string, mixed>
+ */
+function apsFeeAddedCallback(array $overrides = []): array
+{
+    return [
+        'payload' => array_merge([
+            'transaction_id' => 'aps-tx-1',
+            'external_id' => 'DEP-01KZQX1SR2TE7WPP53M0R4X6Z3',
+            'status' => 'completed',
+            'fiscal_status' => 'done',
+            'amount' => 100,
+            'amount_in' => 106.25,
+            'amount_out' => 100,
+            'customer_fee' => 6.25,
+            'merchant_fee' => 0,
+        ], $overrides),
+    ];
 }
 
 function succeededWebhook(array $args = []): TransactionWebhookUpdate
@@ -106,6 +133,87 @@ it('holds a success whose amount deviates beyond tolerance instead of crediting'
 
     $this->ledger->assertNothingMoved();
     Event::assertDispatched(DepositHeldForReview::class);
+});
+
+/*
+ * Regression, production txns 673/681/687/688. Under `settlement_mode: added`
+ * the PSP appends its own fee at checkout, so `requested_amount` (100.00) and
+ * `charged_amount` (106.25) differ by exactly that fee. The adapter used to
+ * report the customer's debit, which put every such deposit 6.25% outside the
+ * 1% band — no APS deposit was ever credited by its own callback, each waited
+ * for an operator to run the sync action (which omits the amount entirely and
+ * so never trips the guard).
+ */
+it('credits a fee-added APS deposit whose callback carries the PSP fee', function () {
+    config()->set('cashier-core.webhooks.amount_tolerance_percent', 1.0);
+
+    $transaction = processorDeposit([
+        'amount' => 100,
+        'requested_amount' => 100,
+        'charged_amount' => 106.25,
+        'psp_fee_amount' => 6.25,
+        'markup_amount' => 0,
+        'settlement_mode' => 'added',
+    ]);
+
+    $update = (new ApsAdapter)->fromWebhook(apsFeeAddedCallback());
+
+    app(WebhookProcessor::class)->applyUpdate('aps', $transaction, $update);
+
+    $fresh = $transaction->fresh();
+
+    expect($fresh->status)->toBe(PaymentStatus::Succeeded)
+        ->and($fresh->metadata['hold_reason'] ?? null)->toBeNull();
+
+    // The ledger is credited the net deposit, never the customer's debit.
+    $this->ledger->assertMoved('credit', fn (array $m) => $m['amount'] === 100.0);
+});
+
+it('still holds an APS callback that reports less than the invoiced order', function () {
+    config()->set('cashier-core.webhooks.amount_tolerance_percent', 1.0);
+
+    $transaction = processorDeposit(['requested_amount' => 100, 'psp_fee_amount' => 6.25]);
+
+    $update = (new ApsAdapter)->fromWebhook(apsFeeAddedCallback(['amount' => 50, 'amount_out' => 50]));
+
+    app(WebhookProcessor::class)->applyUpdate('aps', $transaction, $update);
+
+    $fresh = $transaction->fresh();
+
+    expect($fresh->status)->toBe(PaymentStatus::OnHold)
+        ->and($fresh->metadata['hold_reason'] ?? null)->toContain('deviates');
+
+    $this->ledger->assertNothingMoved();
+});
+
+/*
+ * Fee drift reads APS's merchant settlement from `aps_amount_out`, which is a
+ * different question from the invoice guard and must stay answerable from the
+ * same callback.
+ */
+it('still reports fee drift from the APS settlement figure after crediting', function () {
+    Event::fake([FeeDriftDetected::class]);
+
+    $transaction = processorDeposit([
+        'amount' => 100,
+        'requested_amount' => 100,
+        'charged_amount' => 106.25,
+        'psp_fee_amount' => 6.25,
+        'markup_amount' => 0,
+        'settlement_mode' => 'added',
+    ]);
+
+    // The order was 100.00 as invoiced, but APS settled only 90.00 to us.
+    $update = (new ApsAdapter)->fromWebhook(apsFeeAddedCallback(['amount_out' => 90]));
+
+    app(WebhookProcessor::class)->applyUpdate('aps', $transaction, $update);
+
+    expect($transaction->fresh()->status)->toBe(PaymentStatus::Succeeded);
+
+    Event::assertDispatched(
+        FeeDriftDetected::class,
+        fn (FeeDriftDetected $e) => $e->transaction->is($transaction) && $e->expected === 100.0 && $e->actual === 90.0,
+    );
 });
 
 it('holds a success whose currency does not match the invoice', function () {
