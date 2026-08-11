@@ -22,7 +22,9 @@ Error tables, exported as CSV without authentication:
 https://docs.google.com/spreadsheets/d/16R_DIBU_3TIwKG7j6e2Iq6smyWXvSK5kWRYPpyPwym4/export?format=csv&gid=0
 https://docs.google.com/spreadsheets/d/16R_DIBU_3TIwKG7j6e2Iq6smyWXvSK5kWRYPpyPwym4/export?format=csv&gid=1669444698
 
-Requires `pandoc`. Python 3 standard library only.
+Requires `pandoc`. Python 3 standard library only. Generated with pandoc 3.9
+on 2026-08-11 — a whole-file reformat on refresh usually means a different
+pandoc major version, not a contract change.
 
 ## What the source does not contain
 
@@ -47,9 +49,10 @@ loudly instead of silently emptying a file.
 
 ## Regenerating
 
-Save the script below to `/tmp/hero-mirror.py`, then, from the repo root:
+Save the script below to `/tmp/hero-mirror.py`, then run it from anywhere —
+it locates the references directory itself via `git rev-parse
+--show-toplevel`:
 
-    cd .claude/skills/heropayments/references
     python3 /tmp/hero-mirror.py
 
 `git diff` on the result is the changelog Heropayments does not publish. Read it
@@ -60,10 +63,12 @@ exists to surface.
 #!/usr/bin/env python3
 """Mirror the Heropayments Postman collection to markdown references.
 
-Writes overview.md, callbacks.md, v2.md, custody.md and errors.md into the
-current directory. Requires pandoc.
+Writes overview.md, callbacks.md, v2.md, custody.md and errors.md into
+.claude/skills/heropayments/references, located via `git rev-parse
+--show-toplevel` so the script can be run from anywhere. Requires pandoc.
 """
 import json
+import os
 import re
 import subprocess
 import sys
@@ -74,6 +79,12 @@ COLLECTION = ("https://documenter.gw.postman.com/api/collections/"
 SHEET = ("https://docs.google.com/spreadsheets/d/"
          "16R_DIBU_3TIwKG7j6e2Iq6smyWXvSK5kWRYPpyPwym4/export?format=csv&gid=")
 ERROR_SHEETS = [("V2", "0"), ("Custody", "1669444698")]
+
+# Top-level collection folders, in the order the generator expects them. Bound
+# by name, not position: if Heropayments adds, removes or reorders a
+# top-level folder, `folders()` below exits loudly instead of `zip` silently
+# dropping or misassigning one.
+TOP_LEVEL_FOLDERS = [("V2 Flow", "v2.md"), ("Custody flow", "custody.md")]
 
 # Four response examples are bulk data lists — every supported ticker, every
 # minimum — not contract shape. Verbatim they are 2,683 of the collection's
@@ -185,13 +196,42 @@ def csv_to_table(text):
     return [line(rows[0]), "|" + "---|" * width] + [line(r) for r in rows[1:] if any(r)]
 
 
+def refs_dir():
+    """Locate .claude/skills/heropayments/references from anywhere in the
+    repo, so the generator's output does not depend on the caller's cwd."""
+    toplevel = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    return os.path.join(toplevel, ".claude", "skills", "heropayments", "references")
+
+
+def folders(collection):
+    """Match collection["item"] to TOP_LEVEL_FOLDERS by name, not position.
+
+    Exits non-zero if Heropayments has added, removed, renamed or reordered a
+    top-level folder, instead of letting `zip` silently drop or misassign one.
+    """
+    found = [item["name"] for item in collection["item"]]
+    expected = [name for name, _ in TOP_LEVEL_FOLDERS]
+    if found != expected:
+        sys.exit(
+            "top-level collection folders changed: "
+            f"expected {expected!r}, found {found!r}"
+        )
+    return list(zip(collection["item"], (filename for _, filename in TOP_LEVEL_FOLDERS)))
+
+
 def write(path, lines):
-    with open(path, "w") as handle:
+    with open(os.path.join(REFS_DIR, path), "w") as handle:
         handle.write("\n".join(lines).rstrip() + "\n")
     print(f"wrote {path}")
 
 
 def main():
+    global REFS_DIR
+    REFS_DIR = refs_dir()
+
     collection = json.loads(fetch(COLLECTION))
 
     overview_html, callbacks_html = split_at(
@@ -200,7 +240,7 @@ def main():
     write("overview.md", ["# Heropayments — overview", "", md(overview_html)])
     write("callbacks.md", ["# Heropayments — callbacks", "", md(callbacks_html)])
 
-    for folder, filename in zip(collection["item"], ("v2.md", "custody.md")):
+    for folder, filename in folders(collection):
         write(filename, render_folder(folder, 1))
 
     errors = ["# Heropayments — API error codes", ""]
