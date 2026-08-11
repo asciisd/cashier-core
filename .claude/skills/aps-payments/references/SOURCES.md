@@ -106,7 +106,7 @@ check() { # name actual expected
   if [ "$2" = "$3" ]; then printf '  ok   %-22s %s\n' "$1" "$2"
   else printf '  FAIL %-22s got %s want %s\n' "$1" "$2" "$3"; status=1; fi
 }
-for spec in "h2h 14 27 4" "fpf-v3 11 21 3"; do
+for spec in "h2h 14 29 4" "fpf-v3 11 23 3"; do
   set -- $spec
   f="$1.md"
   echo "$f"

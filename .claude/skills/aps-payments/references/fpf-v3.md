@@ -101,7 +101,13 @@ Review this document and perform the following tests:
 
 ### Integration Diagram
 
-![integration steps](/developers/assets/images/steps-b6a44d5b9cbca1ce76162e3e025259d3.png)
+<!-- source: steps.png -->
+1. Agreements about payment methods, countries, and the limits of transfers.
+2. Credentials for the Stage environment, delivered as a one-time link by email.
+3. Test on the staging environment.
+4. Credentials for the Prod environment, delivered as a one-time link by email.
+5. Test on the Prod environment.
+6. After APS confirms the integration is done, traffic can start.
 
 ### Check-list before Go Live
 
@@ -123,7 +129,29 @@ Review this document and perform the following tests:
 
 ### Sequence Diagram for Deposit
 
-![Sequence Diagram for Deposit](/developers/assets/images/SequenceDiagram_For_Deposit-1981e8c4fdf9500f1cb331558bd8ad6b.png)
+<!-- source: SequenceDiagram_For_Deposit.png -->
+```mermaid
+sequenceDiagram
+    actor Customer
+    participant Merchant
+    participant PSP
+    participant FPF
+    Customer->>Merchant: 1. Requests a deposit via a particular method
+    Note over Merchant,PSP: 1. Filtering requested payment methods
+    Merchant->>PSP: 2. GET /info
+    PSP-->>Merchant: 3. methods
+    Merchant->>Merchant: 4. filter a particular method ids
+    Note over Merchant,PSP: 2. Getting a payment page URL
+    Merchant->>PSP: 5. POST /fpf-url passing particular method ids
+    PSP-->>Merchant: 6. fpf_url
+    Merchant-->>Customer: 7. redirect customer to fpf_url
+    Note over Customer,FPF: 3. Executing a payment
+    Customer->>FPF: 8. open, proceeds with payment, or cancel
+    FPF->>PSP: 9. process payment
+    FPF-->>Customer: 10. redirect to redirect_url
+    Note over Merchant,PSP: 4. Result callback
+    PSP->>Merchant: 11. result callback
+```
 
 The happy-path flow is as follows:
 
@@ -141,7 +169,34 @@ The happy-path flow is as follows:
 
 ### Sequence Diagram for Remit
 
-![Sequence Diagram for Remit](/developers/assets/images/SequenceDiagram_For_Payout-808dfa17342ed930dcb96d80314d6163.png)
+<!-- source: SequenceDiagram_For_Payout.png -->
+```mermaid
+sequenceDiagram
+    actor Customer
+    participant Merchant
+    participant PSP
+    participant FPF
+    Customer->>Merchant: 1. Requests a payout via a particular method
+    Note over Merchant,PSP: 1. Filtering requested payment methods
+    Merchant->>PSP: 2. GET /info
+    PSP-->>Merchant: 3. methods
+    Merchant->>Merchant: 4. filter a particular method ids
+    Note over Merchant,PSP: 2. Getting a payment page URL
+    Merchant->>PSP: 5. POST /fpf-url passing particular method ids
+    PSP-->>Merchant: 6. fpf_url
+    Merchant-->>Customer: 7. redirect customer to fpf_url
+    Note over Customer,FPF: 3. Executing a payment
+    Customer->>FPF: 8. open, fills required fields, press Pay
+    FPF->>PSP: 9. make payout
+    Note over Merchant,PSP: 4. Confirm payout with a merchant
+    PSP->>Merchant: 10. POST /confirmation_callback
+    Merchant-->>PSP: 11. 200 (OK)
+    PSP->>PSP: 12. schedules payout
+    PSP-->>FPF: 13. OK (200)
+    FPF-->>Customer: 14. redirect to redirect_url
+    Note over Merchant,PSP: 4. Result callback
+    PSP->>Merchant: 15. result callback
+```
 
 The happy-path flow is as follows:
 

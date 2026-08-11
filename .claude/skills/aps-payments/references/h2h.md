@@ -104,7 +104,13 @@ The API requests will function the same way in the Production Environment. You w
 
 ### Integration Diagram
 
-![integration steps](/developers/assets/images/steps-b6a44d5b9cbca1ce76162e3e025259d3.png)
+<!-- source: steps.png -->
+1. Agreements about payment methods, countries, and the limits of transfers.
+2. Credentials for the Stage environment, delivered as a one-time link by email.
+3. Test on the staging environment.
+4. Credentials for the Prod environment, delivered as a one-time link by email.
+5. Test on the Prod environment.
+6. After APS confirms the integration is done, traffic can start.
 
 ### Check-list before Go Live
 
@@ -126,7 +132,22 @@ The API requests will function the same way in the Production Environment. You w
 
 ### Sequence Diagram for Deposit
 
-![Sequence Diagram for Deposit](/developers/assets/images/Sequence_Diagram_For_Deposit-83c6086ce03eb9e47e28d1c0206b1e34.png)
+<!-- source: Sequence_Diagram_For_Deposit.png -->
+```mermaid
+sequenceDiagram
+    actor Customer
+    participant Merchant
+    participant PSP
+    Customer->>Merchant: 1. Requests a deposit via a particular method
+    Note over Merchant,PSP: 1. Executing a payment
+    Merchant->>PSP: 2. POST /transactions passing particular method id with fields
+    PSP-->>Merchant: 3. redirect `how` link
+    Merchant-->>Customer: 4. redirect to payment form
+    Customer->>PSP: 5. open, proceed with payment or cancel
+    PSP->>PSP: 6. process payment
+    Note over Merchant,PSP: 2. Status callback
+    PSP->>Merchant: 7. status callback
+```
 
 The happy-path flow is as follows:
 
@@ -144,7 +165,19 @@ The happy-path flow is as follows:
 
 ### Sequence Diagram for Remit
 
-![Sequence Diagram for Remit](/developers/assets/images/Sequence_Diagram_For_Payout-6a53f4dc186a2c79bd431d68dc0fe145.png)
+<!-- source: Sequence_Diagram_For_Payout.png -->
+```mermaid
+sequenceDiagram
+    actor Customer
+    participant Merchant
+    participant PSP
+    Customer->>Merchant: 1. Requests a payout via a particular method
+    Note over Merchant,PSP: 1. Executing a payment
+    Merchant->>PSP: 2. POST /transactions passing particular method id
+    PSP->>PSP: 3. schedules payout
+    Note over Merchant,PSP: 2. Status callback
+    PSP->>Merchant: 4. status callback
+```
 
 The happy-path flow is as follows:
 
@@ -397,7 +430,11 @@ For example: `https://app.payment.com/payment/secpay?linkToken=793c9fb78be54d898
 
 You will need to take the “how” link from the response and redirect customer to checkout form:
 
-![hosted page](/developers/assets/images/hosted_page-86fd2df4180f265996c391fb44ddb14d.png)
+<!-- source: hosted_page.png -->
+The APS-hosted card form: a "Card details" panel warning that if the card
+currency differs from the payment currency the customer's bank may charge a
+conversion fee, above four fields — Card Number, Cardholder Name, MM/YY, and
+CVV/CVC.
 
 The customer will enter the card details.
 
