@@ -4,8 +4,8 @@ Where the live Heropayments contract departs from its documentation, and where
 the docs are silent. Each entry cites both sides: a passage in a mirror in this
 directory, and a line in this repo.
 
-Entries marked **Unverified** describe behaviour that may be wrong in
-production. They are recorded rather than fixed, because settling them needs
+Three entries are marked **Unverified**: they describe behaviour that may be
+wrong in production, recorded rather than fixed because settling them needs
 production callback logs rather than a document search. Each names what would
 settle it.
 
@@ -24,8 +24,7 @@ processing" does the same with `sequence: original` and a changed `payCurrency`.
 `src/Drivers/Heropayment/`. A second deposit therefore arrives addressed to the
 first deposit's transaction. We pass the MT5 trading account login as
 `customerId` (`HeropaymentProvider.php:109-114`), so every account holds one
-permanent deposit address for as long as it exists — this is reachable by any
-customer who scrolls back to an old deposit screen.
+permanent deposit address for as long as it exists.
 
 **Unverified:** whether any repeat deposit has actually arrived. Search
 production callback logs for two payloads sharing an `externalOrderId` with
@@ -33,8 +32,9 @@ differing `sequence`.
 
 ## 2. `actuallyPaid` is not a Heropayments field
 
-**Docs** (`callbacks.md`, all three callback examples; `v2.md`, "Payment status
-check by id (V2)"): the amount actually received is `paidAmount`. The string
+**Docs** (`callbacks.md`, both V2 callback examples — the Custody deposit
+callback uses `amount`/`clientAmount` instead; `v2.md`, "Payment status check
+by id (V2)"): the amount actually received is `paidAmount`. The string
 `actuallyPaid` does not occur anywhere in the collection.
 
 **Here:** `HeropaymentAdapter.php:78` and `HeropaymentAdapter.php:137` both read `actuallyPaid`, so
@@ -97,11 +97,12 @@ report". The create-invoice response returns that invoice id as its top-level
 transaction id and keeps the invoice id in metadata, so correlation runs on the
 one identifier both sides agree on.
 
-## 7. No endpoint exposes the contracted `feePercent`
+## 7. No endpoint exposes the contracted `feePercent` ahead of a payment
 
-**Docs:** `feePercent` appears on a created payment and on status callbacks
-(`callbacks.md`). No endpoint in `v2.md` or `custody.md` returns the merchant's
-contracted rate.
+**Docs:** `feePercent` appears repeatedly in `v2.md` and `custody.md`, but only
+ever as a field on a payment that already exists — a created payment, a status
+check, or a callback (`callbacks.md`). No endpoint returns the merchant's
+contracted rate on its own, ahead of any payment.
 
 **Here:** `HeropaymentQuoteService.php:173-185` reads it from connection config,
 because a quote must be shown before any payment exists. That configured value
