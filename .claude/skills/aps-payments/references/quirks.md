@@ -62,7 +62,7 @@ method and for the day APS returns the form URL directly.
 
 `src/Drivers/Aps/ApsProvider.php:118-142`
 
-## 6. Two status vocabularies, one member unhandled, and `status` swaps meaning by path
+## 6. Three status vocabularies, five members unhandled, and `status` swaps meaning by path
 
 Fiscal statuses: `pending`, `canceled`, `expired`, `done`, `failed` (the docs
 qualify `failed` as "for Payouts only"). Deposit (sep31) statuses:
@@ -123,23 +123,38 @@ but serves the H2H `/api/v3` API too — it is the default `base_url`.
 
 `src/Drivers/Aps/ApsProvider.php:49`
 
-## 11. Documented `retryable` flag on card errors, unused here
+## 11. The `retryable` flag belongs to an endpoint we never call
 
-The H2H guide's error table marks card-level failures (empty holder, expired
-card, invalid CSC, bad check digit …) with `retryable: true` and a specific
-`external_status`. Our charge path catches the transport failure and throws a
-generic `PaymentProcessingException` without inspecting either field, so a
-retryable card error is currently indistinguishable from a hard failure. Known
-gap, not a deliberate decision — see the error table in `h2h.md`.
+The H2H error table that marks card-level failures (empty holder, expired card,
+invalid CSC, bad check digit …) with `retryable: true` and a specific
+`external_status` sits under **Direct post of bank card data** — a separate
+endpoint where the merchant POSTs raw PAN, holder, expiry and CSC to the
+`form.pci-gw.com` URL returned in `how`.
 
-`src/Drivers/Aps/ApsProvider.php:86-96`
+This package takes the other branch of that same section: `charge()` creates the
+transaction (`POST /api/v3/{merchantGuid}/transactions`) and hands the customer
+the `how` checkout URL to complete themselves. We never post card data, so those
+`400`s never reach us — card-level failures happen at the hosted form, and we
+learn the outcome from the status callback. Nothing in the driver is expected to
+read `retryable` today, and its absence there is not a defect.
+
+Worth knowing if direct post is ever adopted: it is the only place `retryable`
+appears, it is the only signal separating "ask the customer to re-enter the
+card" from a hard decline, and `external_status` carries the machine-readable
+reason. Both would need honouring at that point.
+
+`h2h.md:441-528` (the section, sibling file), `h2h.md:504-520` (the error table).
+The redirect path we do take, for contrast — not a site of any defect:
+`src/Drivers/Aps/ApsClient.php:34-40`, `src/Drivers/Aps/ApsProvider.php:102-104`
 
 ## 12. Connection keys the package's own config example omits
 
 The driver reads `callback_secret`, `deposit_method`, `redirect_url`,
 `webhook_url` and `checkout_host_map`. None appear in the commented example
 block in `config/cashier-core.php:32-38`, which shows only `driver`, `base_url`,
-`merchant_guid`, `app_token` and `app_secret`. Anyone configuring a connection
+`merchant_guid`, `app_token` and `app_secret`. (`callback_secret` does at least
+appear in the README's connection example, `README.md:58`; the other four appear
+in no example anywhere.) Anyone configuring a connection
 from that example alone gets a driver that throws on `charge()` for the missing
 `deposit_method` and silently fails callback verification.
 

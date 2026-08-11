@@ -21,8 +21,9 @@ Also not mirrored, as they hold no content: `docs/intro`, `docs/category/*`,
 
 ## Regenerating
 
-Save the script below to `/tmp/aps-mirror.py`, then from this directory:
+Save the script below to `/tmp/aps-mirror.py`, then, from the repo root:
 
+    cd .claude/skills/aps-payments/references
     python3 /tmp/aps-mirror.py https://merchant.aps.money/developers/docs/h2h/integration h2h.md
     python3 /tmp/aps-mirror.py https://merchant.aps.money/developers/docs/fpf-v3/integration fpf-v3.md
 
@@ -106,6 +107,8 @@ check() { # name actual expected
   if [ "$2" = "$3" ]; then printf '  ok   %-22s %s\n' "$1" "$2"
   else printf '  FAIL %-22s got %s want %s\n' "$1" "$2" "$3"; status=1; fi
 }
+# Fields: name, table headers, code fences, diagram slots. The fence counts are
+# 27/21 converted from the source pages + 2 mermaid diagram transcriptions each.
 for spec in "h2h 14 29 4" "fpf-v3 11 23 3"; do
   set -- $spec
   f="$1.md"
