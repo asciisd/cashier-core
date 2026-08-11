@@ -62,13 +62,25 @@ method and for the day APS returns the form URL directly.
 
 `src/Drivers/Aps/ApsProvider.php:118-142`
 
-## 6. Two status vocabularies, sometimes in the same payload
+## 6. Two status vocabularies, one member unhandled, and `status` swaps meaning by path
 
-Fiscal statuses: `pending`, `canceled`, `expired`, `done`, `failed`.
-Deposit (sep31) statuses: `pending_sender`, `pending_external`, `completed`,
-`error`. Read `status` first and fall back to `sep31_status`.
+Fiscal statuses: `pending`, `canceled`, `expired`, `done`, `failed` (the docs
+qualify `failed` as "for Payouts only"). Deposit (sep31) statuses:
+`pending_sender`, `pending_external`, `completed`, `error`, and a fifth the
+docs say to treat as an error: `pending_transaction_info_update`. `mapStatus()`
+has no arm for that fifth value, so it falls through to `default` and maps to
+`PaymentStatus::Pending` — a transaction APS considers failed is silently held
+as pending.
 
-`src/Drivers/Aps/ApsAdapter.php:86-101`
+The two vocabularies also live in different fields depending on how the
+payload arrived. On retrieve responses the sep31 vocabulary is in `status`
+and the fiscal vocabulary is in `fiscal_status`. On callbacks it's reversed:
+`status` is fiscal, `sep31_status` is sep31. Both unwrap paths read
+`status ?? sep31_status` and never read `fiscal_status`, so the fiscal
+vocabulary on a retrieve response is never seen at all.
+
+`src/Drivers/Aps/ApsAdapter.php:86-101`, `src/Drivers/Aps/ApsAdapter.php:43-46`,
+`src/Drivers/Aps/ApsAdapter.php:64-67`
 
 ## 7. A downstream rejection arrives as `canceled`, not `failed`
 
