@@ -62,32 +62,40 @@ method and for the day APS returns the form URL directly.
 
 `src/Drivers/Aps/ApsProvider.php:118-142`
 
-## 6. Three status vocabularies, five members unhandled, and `status` swaps meaning by path
+## 6. Three status vocabularies, and `status` swaps meaning by path
 
 Fiscal statuses: `pending`, `canceled`, `expired`, `done`, `failed` (the docs
 qualify `failed` as "for Payouts only"). Deposit (sep31) statuses:
 `pending_sender`, `pending_external`, `completed`, `error`, and a fifth the
-docs say to treat as an error: `pending_transaction_info_update`. `mapStatus()`
-has no arm for that fifth value, so it falls through to `default` and maps to
-`PaymentStatus::Pending` — a transaction APS considers failed is silently held
-as pending.
+docs say to treat as an error despite its name:
+`pending_transaction_info_update`.
 
 Callbacks don't just swap which field means what — they add a third
 vocabulary. `fiscal_status` carries the fiscal enum on both retrieve and
 callback payloads. But on callbacks `status` stops meaning sep31 and instead
 carries APS's own PSP-transaction vocabulary — `canceled`, `expired`,
 `payed`, `done`, `refund_pending`, `refunded`, `refund_rejected` — while
-`sep31_status` sits alongside it holding `completed`/`error`. `mapStatus()`
-has no arm for `payed`, `refund_pending`, `refunded` or `refund_rejected`
-either, so all four also fall through to `default` → `PaymentStatus::Pending`:
-a fully refunded transaction reads as pending. Counting
-`pending_transaction_info_update`, that's five unhandled values across the
-two paths. And `fiscal_status` — the one field that means the same thing
-everywhere — is never read anywhere in the driver; only `status` and
-`sep31_status` are captured, on both paths alike.
+`sep31_status` sits alongside it holding `completed`/`error`.
 
-`src/Drivers/Aps/ApsAdapter.php:86-101`, `src/Drivers/Aps/ApsAdapter.php:43-46`,
-`src/Drivers/Aps/ApsAdapter.php:64-67`, `src/Drivers/Aps/ApsAdapter.php:112-122`
+Five of those values had no arm in `mapStatus()` and fell through to
+`default` → `PaymentStatus::Pending`, so a fully refunded transaction read as
+pending. They are mapped now: `payed` and `refund_pending` → `Processing`,
+`refunded` → `Canceled` (how this package represents a refunded deposit —
+`WebhookProcessor` lets a settled deposit move only to Canceled),
+`refund_rejected` → `Succeeded` (the payment still stands), and
+`pending_transaction_info_update` → `Failed`.
+
+Two things remain true and worth knowing. `fiscal_status` — the one field
+that means the same thing everywhere — is still never read anywhere in the
+driver; only `status` and `sep31_status` are captured, on both paths alike.
+And because `refunded` maps to `Canceled`, a refund callback takes the
+`Failed`/`Canceled` branch in `WebhookProcessor`: it stamps `failed_at`,
+copies `external_message` into `error_message`, and dispatches
+`DepositFailed`. That is the established convention for a refund here, but it
+means a refund can land with a non-error string in `error_message`.
+
+`src/Drivers/Aps/ApsAdapter.php:86-122`, `src/Drivers/Aps/ApsAdapter.php:43-46`,
+`src/Drivers/Aps/ApsAdapter.php:64-67`, `src/Drivers/Aps/ApsAdapter.php:129-144`
 
 ## 7. A downstream rejection arrives as `canceled`, not `failed`
 

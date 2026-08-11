@@ -36,6 +36,49 @@ describe('mapStatus', function () {
         expect($this->adapter->mapStatus('something_new'))->toBe(PaymentStatus::Pending);
         expect($this->adapter->mapStatus(null))->toBe(PaymentStatus::Pending);
     });
+
+    /*
+     * The five below arrive only on the callback path, where `status` carries
+     * APS's PSP-transaction vocabulary rather than the sep31 one — except
+     * `pending_transaction_info_update`, which is sep31. None had an arm, so
+     * all five landed on `default => Pending`. See the aps-payments skill,
+     * references/quirks.md entry 6.
+     */
+
+    it('maps payed to Processing — the customer paid but funds have not settled', function () {
+        expect($this->adapter->mapStatus('payed'))->toBe(PaymentStatus::Processing);
+    });
+
+    it('maps refund_pending to Processing — the acquirer has not answered yet', function () {
+        expect($this->adapter->mapStatus('refund_pending'))->toBe(PaymentStatus::Processing);
+    });
+
+    /*
+     * Canceled is how this package already represents a refunded deposit:
+     * WebhookProcessor lets a settled deposit move only to Canceled
+     * ("refund/chargeback"), and both HeropaymentAdapter and JenapayAdapter
+     * map their own `refunded` the same way.
+     */
+    it('maps refunded to Canceled', function () {
+        expect($this->adapter->mapStatus('refunded'))->toBe(PaymentStatus::Canceled);
+    });
+
+    /*
+     * A rejected refund leaves the payment standing, so the transaction is
+     * still a settled one. Mapping it to Pending would have un-settled a
+     * completed deposit had the out-of-order guard not been there to drop it.
+     */
+    it('maps refund_rejected to Succeeded — the payment still stands', function () {
+        expect($this->adapter->mapStatus('refund_rejected'))->toBe(PaymentStatus::Succeeded);
+    });
+
+    /*
+     * The docs are explicit: "An error occurred during transaction
+     * initiation. This status should be interpreted as an error."
+     */
+    it('maps pending_transaction_info_update to Failed despite the pending_ prefix', function () {
+        expect($this->adapter->mapStatus('pending_transaction_info_update'))->toBe(PaymentStatus::Failed);
+    });
 });
 
 describe('fromProviderResponse', function () {

@@ -84,18 +84,39 @@ class ApsAdapter implements PaymentAdapterInterface
     }
 
     /**
-     * Map an APS fiscal/deposit status to a cashier-core PaymentStatus.
+     * Map an APS status to a cashier-core PaymentStatus.
      *
-     * Fiscal statuses: pending, canceled, expired, done, failed.
-     * Deposit (sep31) statuses: pending_sender, pending_external, completed, error.
+     * APS uses three vocabularies, and which one `status` holds depends on how
+     * the payload reached us:
+     *
+     * - Fiscal (`fiscal_status` on both paths, and `status` on neither):
+     *   pending, canceled, expired, done, failed (payouts only).
+     * - Deposit/sep31 (`status` on retrieve, `sep31_status` on callbacks):
+     *   pending_sender, pending_external, completed, error,
+     *   pending_transaction_info_update.
+     * - PSP transaction (`status` on callbacks only): canceled, expired,
+     *   payed, done, refund_pending, refunded, refund_rejected.
+     *
+     * They are matched in one table because the overlapping members (`done`,
+     * `canceled`, `expired`) mean the same thing in each. The refund states
+     * are reachable only from the callback vocabulary.
      */
     public function mapStatus(mixed $providerStatus): PaymentStatus
     {
         return match (strtolower((string) $providerStatus)) {
             'done', 'completed' => PaymentStatus::Succeeded,
+            // A rejected refund leaves the original payment standing.
+            'refund_rejected' => PaymentStatus::Succeeded,
             'failed', 'error', 'expired' => PaymentStatus::Failed,
-            'canceled', 'cancelled' => PaymentStatus::Canceled,
-            'pending_external' => PaymentStatus::Processing,
+            // Named like an in-flight state, but the docs are explicit that it
+            // "should be interpreted as an error".
+            'pending_transaction_info_update' => PaymentStatus::Failed,
+            // How this package represents a refunded deposit: WebhookProcessor
+            // lets a settled deposit move only to Canceled, and the Heropayment
+            // and Jenapay adapters map their own `refunded` the same way.
+            'canceled', 'cancelled', 'refunded' => PaymentStatus::Canceled,
+            // `payed`: taken from the customer, not yet settled to APS.
+            'pending_external', 'payed', 'refund_pending' => PaymentStatus::Processing,
             default => PaymentStatus::Pending,
         };
     }

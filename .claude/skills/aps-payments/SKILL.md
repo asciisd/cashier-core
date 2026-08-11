@@ -38,12 +38,12 @@ Five things that have already cost time:
 4. **There is no `/transactions/{id}` route.** It is
    `/api/v3/{merchantGuid}/{transactionId}`; the wrong path returns a plain-text
    `404 page not found`.
-5. **There are three status vocabularies, not two, and five documented values
-   go unhandled.** Fiscal (`done`, `canceled`, `expired`, …) and sep31
-   (`completed`, `pending_external`, …) appear on retrieve; callbacks add a
-   third, under the same `status` field (`payed`, `refund_pending`,
-   `refunded`, …). `mapStatus()` has no arm for five of these values, so they
-   silently fall through to `Pending` — including a fully refunded transaction.
+5. **There are three status vocabularies, not two, and `status` means a
+   different one depending on the path.** Fiscal (`done`, `canceled`,
+   `expired`, …) and sep31 (`completed`, `pending_external`, …) appear on
+   retrieve; callbacks put a third under the same `status` field (`payed`,
+   `refund_pending`, `refunded`, …). All are mapped, but `fiscal_status` — the
+   one field meaning the same thing everywhere — is still never read.
 
 ## The code
 
