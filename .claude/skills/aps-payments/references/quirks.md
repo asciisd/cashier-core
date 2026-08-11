@@ -72,15 +72,22 @@ has no arm for that fifth value, so it falls through to `default` and maps to
 `PaymentStatus::Pending` — a transaction APS considers failed is silently held
 as pending.
 
-The two vocabularies also live in different fields depending on how the
-payload arrived. On retrieve responses the sep31 vocabulary is in `status`
-and the fiscal vocabulary is in `fiscal_status`. On callbacks it's reversed:
-`status` is fiscal, `sep31_status` is sep31. Both unwrap paths read
-`status ?? sep31_status` and never read `fiscal_status`, so the fiscal
-vocabulary on a retrieve response is never seen at all.
+Callbacks don't just swap which field means what — they add a third
+vocabulary. `fiscal_status` carries the fiscal enum on both retrieve and
+callback payloads. But on callbacks `status` stops meaning sep31 and instead
+carries APS's own PSP-transaction vocabulary — `canceled`, `expired`,
+`payed`, `done`, `refund_pending`, `refunded`, `refund_rejected` — while
+`sep31_status` sits alongside it holding `completed`/`error`. `mapStatus()`
+has no arm for `payed`, `refund_pending`, `refunded` or `refund_rejected`
+either, so all four also fall through to `default` → `PaymentStatus::Pending`:
+a fully refunded transaction reads as pending. Counting
+`pending_transaction_info_update`, that's five unhandled values across the
+two paths. And `fiscal_status` — the one field that means the same thing
+everywhere — is never read anywhere in the driver; only `status` and
+`sep31_status` are captured, on both paths alike.
 
 `src/Drivers/Aps/ApsAdapter.php:86-101`, `src/Drivers/Aps/ApsAdapter.php:43-46`,
-`src/Drivers/Aps/ApsAdapter.php:64-67`
+`src/Drivers/Aps/ApsAdapter.php:64-67`, `src/Drivers/Aps/ApsAdapter.php:112-122`
 
 ## 7. A downstream rejection arrives as `canceled`, not `failed`
 
