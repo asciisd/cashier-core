@@ -155,18 +155,25 @@ reason. Both would need honouring at that point.
 The redirect path we do take, for contrast — not a site of any defect:
 `src/Drivers/Aps/ApsClient.php:34-40`, `src/Drivers/Aps/ApsProvider.php:102-104`
 
-## 12. Connection keys the package's own config example omits
+## 12. A complete APS connection needs nine keys, and only four are enforced
 
-The driver reads `callback_secret`, `deposit_method`, `redirect_url`,
-`webhook_url` and `checkout_host_map`. None appear in the commented example
-block in `config/cashier-core.php:32-38`, which shows only `driver`, `base_url`,
-`merchant_guid`, `app_token` and `app_secret`. (`callback_secret` does at least
-appear in the README's connection example, `README.md:58`; the other four appear
-in no example anywhere.) Anyone configuring a connection
-from that example alone gets a driver that throws on `charge()` for the missing
-`deposit_method` and silently fails callback verification.
+Beyond `driver`, `base_url`, `merchant_guid`, `app_token` and `app_secret`, the
+driver also reads `callback_secret`, `deposit_method`, `redirect_url`,
+`webhook_url` and `checkout_host_map`. Four of these examples used to show only
+the first five, so a connection copied from one threw on `charge()` for the
+missing `deposit_method` and silently failed callback verification. All four now
+show the full set.
 
-Closing that gap is a code change, out of scope for the skill; recorded here so
-it is not lost.
+What the examples still cannot tell you is when each is enforced. The
+constructor validates only `merchant_guid`, `app_token` and `app_secret`. A
+missing `deposit_method` is not caught there — it throws at the first
+`charge()`, which is a runtime failure on a live deposit rather than a boot-time
+one. A missing `callback_secret` is never caught at all: verification silently
+falls back to the app secret and rejects every callback APS sends.
 
-`config/cashier-core.php:32-38`
+`Cashier::fakeConnection()` is the most reliable statement of the full shape,
+since the test suite exercises it.
+
+`config/cashier-core.php:32-53`, `src/Drivers/Aps/ApsProvider.php:44-46`
+(what is validated), `src/Drivers/Aps/ApsProvider.php:63-67` (what is not),
+`src/Cashier.php:134-143` (the complete key set)

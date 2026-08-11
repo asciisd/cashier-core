@@ -31,10 +31,25 @@ return [
     |
     | 'aps' => [
     |     'driver' => 'aps',
-    |     'base_url' => env('APS_BASE_URL'),
+    |     'base_url' => env('APS_BASE_URL'),  // defaults to the production host
     |     'merchant_guid' => env('APS_MERCHANT_GUID'),
     |     'app_token' => env('APS_APP_TOKEN'),
     |     'app_secret' => env('APS_APP_SECRET'),
+    |     // Signs callbacks, and is issued separately from the app secret.
+    |     // Without it, verification falls back to the app secret and rejects
+    |     // every callback APS sends.
+    |     'callback_secret' => env('APS_CALLBACK_SECRET'),
+    |     // The payment method guid a deposit is opened against. charge()
+    |     // throws without it.
+    |     'deposit_method' => env('APS_DEPOSIT_METHOD'),
+    |     // Optional — these fall back to the `payment.success` and
+    |     // `webhooks.aps` routes where the host defines them.
+    |     'redirect_url' => env('APS_REDIRECT_URL'),
+    |     'webhook_url' => env('APS_WEBHOOK_URL'),
+    |     // Optional. Rewrites the host of a card checkout URL: APS returns
+    |     // `how` pointing at its JSON API, which shows the customer raw JSON
+    |     // instead of the card form. Unlisted hosts pass through untouched.
+    |     'checkout_host_map' => ['api.pci-gw.com' => 'form.pci-gw.com'],
     | ],
     |
     */

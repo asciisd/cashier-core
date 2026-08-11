@@ -41,7 +41,10 @@ connections sharing one driver.
         'merchant_guid' => env('APS_MERCHANT_GUID'),
         'app_token' => env('APS_APP_TOKEN'),
         'app_secret' => env('APS_APP_SECRET'),
-        'callback_secret' => env('APS_CALLBACK_SECRET'),
+        'callback_secret' => env('APS_CALLBACK_SECRET'),  // signs callbacks; not the app secret
+        'deposit_method' => env('APS_DEPOSIT_METHOD'),    // charge() throws without it
+        // Optional: redirect_url, webhook_url (default to the payment.success /
+        // webhooks.aps routes) and checkout_host_map (card URL host rewrite).
     ],
     'aps_binance' => ['driver' => 'aps', /* second merchant account */],
 ],

@@ -55,7 +55,13 @@ syncs use the exact account that took the charge (`transactions.connection`).
         'merchant_guid' => env('APS_MERCHANT_GUID'),
         'app_token' => env('APS_APP_TOKEN'),
         'app_secret' => env('APS_APP_SECRET'),
-        'callback_secret' => env('APS_CALLBACK_SECRET'),
+        'callback_secret' => env('APS_CALLBACK_SECRET'),   // signs callbacks; not the app secret
+        'deposit_method' => env('APS_DEPOSIT_METHOD'),     // charge() throws without it
+        // Optional: default to the `payment.success` / `webhooks.aps` routes.
+        'redirect_url' => env('APS_REDIRECT_URL'),
+        'webhook_url' => env('APS_WEBHOOK_URL'),
+        // Optional: APS returns card checkout URLs on its JSON API host.
+        'checkout_host_map' => ['api.pci-gw.com' => 'form.pci-gw.com'],
     ],
     'aps_binance' => [
         'driver' => 'aps',            // same driver, different account
