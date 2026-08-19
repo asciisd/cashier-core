@@ -52,6 +52,24 @@ return [
     |     'checkout_host_map' => ['api.pci-gw.com' => 'form.pci-gw.com'],
     | ],
     |
+    | A second APS account is another connection on the same driver — APS
+    | issues one account per product, each with its own guid, app key and
+    | callback secret. No driver code and no route are involved: every APS
+    | account posts to the one `webhooks.aps` URL and the sender is identified
+    | by whose callback secret verifies the signature, which is why the URLs
+    | below are left to their route defaults.
+    |
+    | 'aps_apple_pay' => [
+    |     'driver' => 'aps',            // same driver, different account
+    |     'base_url' => env('APS_APPLEPAY_BASE_URL'),
+    |     'merchant_guid' => env('APS_APPLEPAY_MERCHANT_GUID'),
+    |     'app_token' => env('APS_APPLEPAY_APP_TOKEN'),
+    |     'app_secret' => env('APS_APPLEPAY_APP_SECRET'),
+    |     'callback_secret' => env('APS_APPLEPAY_CALLBACK_SECRET'),
+    |     // From `GET /api/v3/{merchantGuid}/info` on this account.
+    |     'deposit_method' => env('APS_APPLEPAY_DEPOSIT_METHOD'),
+    | ],
+    |
     */
     'connections' => [],
 

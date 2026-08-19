@@ -45,6 +45,29 @@ Five things that have already cost time:
    `refund_pending`, `refunded`, …). All are mapped, but `fiscal_status` — the
    one field meaning the same thing everywhere — is still never read.
 
+## Adding another APS account
+
+**No driver code is involved.** APS issues a separate account per product — own
+merchant guid, app key, app secret and callback secret — and `ApsProvider` is
+built to serve exactly one of them per instance. A new account is a new entry in
+`cashier-core.connections` on the same `aps` driver, and nothing else:
+
+1. Get the account's credentials from APS.
+2. Read its payment method guid from `GET /api/v3/{merchantGuid}/info` on that
+   account. `ApsClient::info()` implements the call, though nothing in the
+   package invokes it yet.
+3. Add the connection. `deposit_method` is that guid; `redirect_url` and
+   `webhook_url` can be omitted, because every APS account posts to the one
+   `webhooks.aps` route and `ApsWebhookController` identifies the sender by
+   whose callback secret verifies the signature.
+4. Run `cashier:check`. It resolves every connection, and `ApsProvider`'s
+   constructor throws without a merchant guid, app token or app secret — so a
+   half-filled account fails there rather than at the first charge.
+
+`checkout_host_map` is only for the card gateway's JSON API host; unlisted hosts
+pass through untouched, so leave it off other methods unless a checkout URL
+actually arrives on a mapped host.
+
 ## The code
 
 - `src/Drivers/Aps/ApsClient.php` — HTTP surface, auth headers, signature check

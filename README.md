@@ -63,13 +63,25 @@ syncs use the exact account that took the charge (`transactions.connection`).
         // Optional: APS returns card checkout URLs on its JSON API host.
         'checkout_host_map' => ['api.pci-gw.com' => 'form.pci-gw.com'],
     ],
-    'aps_binance' => [
+    'aps_apple_pay' => [
         'driver' => 'aps',            // same driver, different account
-        'merchant_guid' => env('APS_BINANCE_MERCHANT_GUID'),
-        // ...
+        'base_url' => env('APS_APPLEPAY_BASE_URL'),
+        'merchant_guid' => env('APS_APPLEPAY_MERCHANT_GUID'),
+        'app_token' => env('APS_APPLEPAY_APP_TOKEN'),
+        'app_secret' => env('APS_APPLEPAY_APP_SECRET'),
+        'callback_secret' => env('APS_APPLEPAY_CALLBACK_SECRET'),
+        'deposit_method' => env('APS_APPLEPAY_DEPOSIT_METHOD'),
     ],
 ],
 ```
+
+APS issues a separate merchant account per product, so a second APS method is a
+second *account* — and adding one is configuration only: no driver code, no new
+route, no webhook registration. The accounts share the single `webhooks.aps`
+URL because APS callbacks carry no merchant identifier and the sender is found
+by trying each account's `callback_secret` until one verifies. An account's
+`deposit_method` guid comes from `GET /api/v3/{merchantGuid}/info` on that
+account.
 
 Bundled drivers resolve automatically; a connection with a `class` key
 overrides the driver map, and plugins append their drivers to
