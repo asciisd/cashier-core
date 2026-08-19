@@ -82,8 +82,11 @@ return [
     |     'driver' => 'myfatoorah',
     |     'base_url' => env('MYFATOORAH_BASE_URL'),
     |     'api_key' => env('MYFATOORAH_API_KEY'),
-    |     // Enabled per webhook in the portal as the "secure key", and
-    |     // mandatory for V2 deliveries. Without it every callback is refused.
+    |     // Required. Enabled per webhook in the portal as the "secure key",
+    |     // and mandatory for V2 deliveries. The connection will not resolve
+    |     // without it: a blank secret is still a working HMAC key, and every
+    |     // field the signature covers is public, so anyone could forge a
+    |     // callback that verifies.
     |     'webhook_secret' => env('MYFATOORAH_WEBHOOK_SECRET'),
     |     // Required. MyFatoorah cannot charge USD: Order.Currency accepts
     |     // only SAR, BHD, AED, QAR, OMR, KWD, JOD and EGP. The driver

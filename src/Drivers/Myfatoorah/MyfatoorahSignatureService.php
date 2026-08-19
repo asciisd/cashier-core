@@ -90,6 +90,15 @@ final class MyfatoorahSignatureService
      */
     public function verify(int $eventCode, array $data, string $signature): bool
     {
+        // Defence in depth, independent of whoever constructed this service.
+        // hash_hmac with an empty key is a perfectly valid HMAC, and every
+        // input to the canonical string is public, so under a blank secret an
+        // attacker can compute a signature that verifies. Nothing verifies
+        // under a blank key.
+        if ($this->secret === '') {
+            return false;
+        }
+
         return hash_equals($this->sign($eventCode, $data), $signature);
     }
 }

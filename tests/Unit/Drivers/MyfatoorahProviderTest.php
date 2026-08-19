@@ -59,6 +59,23 @@ describe('construction', function () {
     });
 
     /*
+     * A blank secret is not "no verification", it is a WORKING HMAC key, and
+     * every field the canonical string is built from is public — the attacker
+     * reads their own InvoiceId out of the redirect URL. Without this guard
+     * they sign a forged SUCCESS with the empty key, the provider verifies
+     * it, and the engine credits the ledger.
+     */
+    it('refuses a connection with no webhook secret', function () {
+        expect(fn () => new MyfatoorahProvider(myfatoorahConfig(['webhook_secret' => null])))
+            ->toThrow(PaymentProcessingException::class, 'webhook secret');
+    });
+
+    it('refuses a connection whose webhook secret is a blank string', function () {
+        expect(fn () => new MyfatoorahProvider(myfatoorahConfig(['webhook_secret' => ''])))
+            ->toThrow(PaymentProcessingException::class, 'webhook secret');
+    });
+
+    /*
      * MyFatoorah cannot charge USD, so a connection with no currency would
      * charge in whatever PaymentService pinned and be rejected as an opaque
      * ValidationError on the first live charge.

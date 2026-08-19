@@ -60,6 +60,17 @@ class MyfatoorahProvider implements PaymentProcessorInterface, PreparesChargeDat
             throw new PaymentProcessingException('MyFatoorah provider is not configured.');
         }
 
+        // Not optional, and not merely "callbacks would be refused": a blank
+        // secret is a WORKING HMAC key. The canonical string is built from
+        // fields an attacker already holds — the InvoiceId is in their own
+        // redirect URL — so hash_hmac(..., '') produces a signature they can
+        // compute themselves, verifyWebhookSignature() accepts it, and a
+        // forged SUCCESS credits the ledger. Refusing to resolve is the only
+        // safe reading of a missing secret.
+        if ((string) ($config['webhook_secret'] ?? '') === '') {
+            throw new PaymentProcessingException('MyFatoorah connection has no webhook secret configured.');
+        }
+
         $currency = strtoupper((string) ($config['currency'] ?? ''));
 
         if ($currency === '') {

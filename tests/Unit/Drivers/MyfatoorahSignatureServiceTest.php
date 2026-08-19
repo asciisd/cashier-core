@@ -125,6 +125,23 @@ describe('verify', function () {
         expect($this->service->verify(MyfatoorahSignatureService::PAYMENT_STATUS_CHANGED, $data, $signature))->toBeTrue();
     });
 
+    /*
+     * The defence-in-depth half of the blank-secret hole. hash_hmac with an
+     * empty key is a perfectly valid HMAC and every input to the canonical
+     * string is public, so an attacker holding only their own InvoiceId can
+     * compute the signature an empty-keyed service would produce. Nothing
+     * verifies under a blank secret, whoever constructed the service.
+     */
+    it('verifies nothing at all when the secret is empty', function () {
+        $blank = new MyfatoorahSignatureService('');
+        $data = myfatoorahPaymentEventData();
+
+        $forged = $blank->sign(MyfatoorahSignatureService::PAYMENT_STATUS_CHANGED, $data);
+
+        expect($forged)->not->toBe('')
+            ->and($blank->verify(MyfatoorahSignatureService::PAYMENT_STATUS_CHANGED, $data, $forged))->toBeFalse();
+    });
+
     it('rejects an empty signature', function () {
         expect($this->service->verify(MyfatoorahSignatureService::PAYMENT_STATUS_CHANGED, myfatoorahPaymentEventData(), ''))->toBeFalse();
     });
