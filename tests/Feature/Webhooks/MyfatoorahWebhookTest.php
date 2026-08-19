@@ -9,6 +9,7 @@ use Asciisd\CashierCore\Jobs\ProcessPaymentProviderWebhook;
 use Asciisd\CashierCore\Models\WebhookEvent;
 use Asciisd\CashierCore\Testing\WebhookSimulator;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 
 beforeEach(function () {
@@ -140,6 +141,34 @@ it('rejects a delivery carrying no version header', function () {
     ])->assertForbidden();
 
     Queue::assertNothingPushed();
+});
+
+/*
+ * The version gate fires on an UNAUTHENTICATED POST, before any signature
+ * work, so any internet host that finds the endpoint can trigger it at will.
+ * `critical` is reserved by EnforcesSignatureVerification for a deployment
+ * incident nobody outside can cause; logging this at critical hands a
+ * stranger the on-call pager.
+ */
+it('logs an unsupported version at warning, not critical', function () {
+    Log::spy();
+    Log::shouldReceive('channel')->andReturnSelf();
+
+    $delivery = WebhookSimulator::make('myfatoorah', myfatoorahEvent());
+
+    $this->postJson($delivery->uri, $delivery->payload, [
+        'MyFatoorah-Signature' => $delivery->headers['MyFatoorah-Signature'],
+        'MyFatoorah-Webhook-Version' => 'v9',
+    ])->assertForbidden();
+
+    Log::shouldNotHaveReceived('critical');
+
+    // The detail still has to survive the level change.
+    Log::shouldHaveReceived('warning')->withArgs(
+        fn (string $message, array $context) => str_contains($message, 'unsupported version')
+            && $context['driver'] === 'myfatoorah'
+            && $context['version'] === 'v9'
+    );
 });
 
 it('rejects a v1 delivery rather than verifying it with the v2 rule', function () {

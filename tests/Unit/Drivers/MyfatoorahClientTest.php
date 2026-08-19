@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Asciisd\CashierCore\Drivers\Myfatoorah\MyfatoorahClient;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 beforeEach(function () {
     $this->client = new MyfatoorahClient('https://apitest.myfatoorah.com', 'test-api-key');
@@ -101,11 +102,63 @@ describe('createPayment', function () {
             ->toThrow(PaymentProcessingException::class, 'No HTTP resource was found');
     });
 
-    it('shape 5: raises an HTML 403 that is not JSON at all', function () {
-        Http::fake(['*' => Http::response('<html><body>403 Forbidden</body></html>', 403)]);
+    /*
+     * PspHttp::client() has no ->throw(), so a 403 is an ordinary response
+     * and this PaymentProcessingException sails past charge()'s
+     * catch (HttpClientException). Without the log line here NOTHING in the
+     * driver records a failed charge — and the assembled message keeps only
+     * "non-JSON response (403)" while the HTML naming the block reason (an
+     * Azure Application Gateway IP block, in the shape that motivated this)
+     * is thrown away.
+     */
+    it('shape 5: raises an HTML 403 that is not JSON at all, and keeps the body in the log', function () {
+        Log::spy();
+        Log::shouldReceive('channel')->andReturnSelf();
+
+        Http::fake(['*' => Http::response(
+            '<html><body>403 Forbidden: your IP was blocked by the application gateway</body></html>',
+            403,
+        )]);
 
         expect(fn () => $this->client->createPayment([], 'k'))
             ->toThrow(PaymentProcessingException::class, 'non-JSON');
+
+        Log::shouldHaveReceived('error')->withArgs(
+            fn (string $message, array $context) => $message === 'Provider charge request failed'
+                && $context['provider'] === 'myfatoorah'
+                && $context['http_status'] === 403
+                && str_contains($context['error'], 'blocked by the application gateway')
+        );
+    });
+
+    it('logs the rejected body for a JSON rejection too', function () {
+        Log::spy();
+        Log::shouldReceive('channel')->andReturnSelf();
+
+        Http::fake(['*' => Http::response([
+            'IsSuccess' => false,
+            'ValidationErrors' => [['Name' => 'PaymentMethod', 'Error' => 'is not enabled']],
+        ], 422)]);
+
+        expect(fn () => $this->client->createPayment([], 'k'))
+            ->toThrow(PaymentProcessingException::class);
+
+        Log::shouldHaveReceived('error')->withArgs(
+            fn (string $message, array $context) => $message === 'Provider charge request failed'
+                && $context['http_status'] === 422
+                && str_contains($context['error'], 'is not enabled')
+        );
+    });
+
+    it('logs nothing on a successful charge', function () {
+        Log::spy();
+        Log::shouldReceive('channel')->andReturnSelf();
+
+        Http::fake(['*' => Http::response(['IsSuccess' => true, 'Data' => ['InvoiceId' => '1']])]);
+
+        $this->client->createPayment([], 'k');
+
+        Log::shouldNotHaveReceived('error');
     });
 
     it('accepts IsSuccess as the string "true" as well as the boolean', function () {

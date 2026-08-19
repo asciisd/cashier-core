@@ -53,7 +53,13 @@ class MyfatoorahWebhookController extends Controller
             $version = strtolower((string) $request->header('MyFatoorah-Webhook-Version', ''));
 
             if ($version !== self::WEBHOOK_VERSION) {
-                Log::critical('cashier-core: refusing a MyFatoorah webhook of an unsupported version', [
+                // warning, not critical. EnforcesSignatureVerification
+                // reserves `critical` for a deployment incident nobody
+                // outside can cause. This gate fires on an UNAUTHENTICATED
+                // POST with a missing or wrong header, before any signature
+                // work, so any internet host that finds the endpoint could
+                // otherwise hold down an on-call pager at will.
+                Log::warning('cashier-core: refusing a MyFatoorah webhook of an unsupported version', [
                     'driver' => self::DRIVER,
                     'version' => $version !== '' ? $version : '(absent)',
                 ]);

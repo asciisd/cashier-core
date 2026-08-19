@@ -48,7 +48,23 @@ final class MyfatoorahClient
             ->withHeader('Idempotency-Key', $idempotencyKey)
             ->post("{$this->baseUrl}/v3/payments", $payload);
 
-        return $this->envelope($response);
+        try {
+            return $this->envelope($response);
+        } catch (PaymentProcessingException $e) {
+            // PspHttp::client() has no ->throw(), so a 403 is an ordinary
+            // response and this exception sails straight past charge()'s
+            // catch (HttpClientException). Without this line NOTHING in the
+            // driver records a failed charge, and the body is discarded —
+            // for shape 5 that means losing the HTML page naming the block
+            // reason and keeping only "non-JSON response (403)".
+            PaymentLogger::providerChargeRequestFailed(
+                'myfatoorah',
+                $response->status(),
+                Str::limit($response->body(), 500),
+            );
+
+            throw $e;
+        }
     }
 
     /**

@@ -129,7 +129,7 @@ class MyfatoorahProvider implements PaymentProcessorInterface, PreparesChargeDat
             // Omitted, not nulled: leaving the key out is what lands the
             // customer on MyFatoorah's own picker showing every method
             // enabled on the account.
-            'PaymentMethod' => $this->config['payment_method'] ?? null,
+            'PaymentMethod' => $this->setting('payment_method'),
             'Order' => [
                 // The exact figure we were handed. transactions.amount is
                 // decimal(16,2) so this is already two-decimal; no scaling,
@@ -146,9 +146,9 @@ class MyfatoorahProvider implements PaymentProcessorInterface, PreparesChargeDat
                     : null,
             ], fn ($value) => $value !== null && $value !== ''),
             'IntegrationUrls' => array_filter([
-                'Redirection' => $this->config['redirect_url']
+                'Redirection' => $this->setting('redirect_url')
                     ?? (Route::has('payment.success') ? route('payment.success') : null),
-                'Webhook' => $this->config['webhook_url']
+                'Webhook' => $this->setting('webhook_url')
                     ?? (Route::has('cashier.webhooks.myfatoorah') ? route('cashier.webhooks.myfatoorah') : null),
             ], fn ($value) => $value !== null),
             'Language' => $this->language($data),
@@ -310,6 +310,34 @@ class MyfatoorahProvider implements PaymentProcessorInterface, PreparesChargeDat
     private function currency(): string
     {
         return strtoupper((string) $this->config['currency']);
+    }
+
+    /**
+     * An optional connection setting, with a set-but-EMPTY value read as
+     * unset.
+     *
+     * `MYFATOORAH_PAYMENT_METHOD=` in a .env leaves the key present holding
+     * an empty string, so `??` never fires; the final array_filter drops null
+     * and [] but not ''. `PaymentMethod: ''` is not the method picker — that
+     * needs the key absent — and is a validation error on every charge.
+     *
+     * It is worse on the two IntegrationUrls: an empty `webhook_url` would
+     * skip the route fallback entirely and send `Webhook: ''`. Omitting the
+     * parameter routes events to the URL configured in the dashboard;
+     * sending an empty one is undefined and could lose every webhook for
+     * that invoice.
+     */
+    private function setting(string $key): ?string
+    {
+        $value = $this->config[$key] ?? null;
+
+        if (! is_scalar($value)) {
+            return null;
+        }
+
+        $value = trim((string) $value);
+
+        return $value !== '' ? $value : null;
     }
 
     /**

@@ -194,6 +194,32 @@ describe('charge', function () {
         Http::assertSent(fn ($request) => ! array_key_exists('PaymentMethod', $request->data()));
     });
 
+    /*
+     * `MYFATOORAH_PAYMENT_METHOD=` in a .env leaves the key present holding
+     * an empty string, so `??` never fires and the final array_filter drops
+     * null and [] but not ''. Sending `PaymentMethod: ''` is NOT the picker —
+     * that needs the key absent — and is a validation error on every charge.
+     */
+    it('omits the payment method when the connection sets it to an empty string', function () {
+        (new MyfatoorahProvider(myfatoorahConfig(['payment_method' => ''])))->charge(['amount' => 100.0]);
+
+        Http::assertSent(fn ($request) => ! array_key_exists('PaymentMethod', $request->data()));
+    });
+
+    /*
+     * Worse on the IntegrationUrls: an empty `webhook_url` would skip the
+     * route fallback and send `Webhook: ''`. Omitting the parameter routes
+     * events to the dashboard-configured URL; an empty one is undefined and
+     * could lose every webhook for that invoice.
+     */
+    it('falls back to the route when webhook_url is set to an empty string', function () {
+        (new MyfatoorahProvider(myfatoorahConfig(['webhook_url' => '', 'redirect_url' => ''])))
+            ->charge(['amount' => 100.0]);
+
+        Http::assertSent(fn ($request) => $request['IntegrationUrls']['Webhook'] === route('cashier.webhooks.myfatoorah')
+            && $request['IntegrationUrls']['Webhook'] !== '');
+    });
+
     it('derives the language from the customer locale when unconfigured', function () {
         $provider = new MyfatoorahProvider(myfatoorahConfig());
         $data = $provider->prepareChargeData(myfatoorahCustomer(), 'myfatoorah', ['amount' => 100.0]);
