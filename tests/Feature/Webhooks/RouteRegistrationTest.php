@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
 
 it('registers every webhook route under the configured prefix and name prefix', function () {
-    foreach (['aps', 'jenapay', 'heropayment', 'payport', 'sticpay'] as $driver) {
+    foreach (['aps', 'jenapay', 'heropayment', 'payport', 'sticpay', 'myfatoorah'] as $driver) {
         expect(Route::has("cashier.webhooks.{$driver}"))->toBeTrue();
 
         $route = Route::getRoutes()->getByName("cashier.webhooks.{$driver}");
