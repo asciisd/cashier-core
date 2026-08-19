@@ -16,7 +16,8 @@ providers. All of them are hosted-redirect: no PAN or CVV ever touches your
 application (SAQ-A posture). Paytiko and KNET remain separate plugins
 (`asciisd/cashier-paytiko`, `asciisd/knet`) built on this core.
 
-MyFatoorah covers the GCC (card, KNET, Apple Pay, Google Pay) on its V3 API,
+MyFatoorah covers the GCC plus Jordan and Egypt (card, KNET, Apple Pay, Google
+Pay) on its V3 API,
 and supports deposits, webhooks and sync — not refunds. It takes **one
 connection per country**: MyFatoorah issues one API key per country and each
 key must be sent to that country's host. Note that reaching KNET *through*

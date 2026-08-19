@@ -22,6 +22,16 @@ namespace Asciisd\CashierCore\Drivers\Myfatoorah;
  * which mistake you made. See the myfatoorah skill, references/pitfalls.md
  * entries 3-4.
  *
+ * WHAT THE SIGNATURE DOES NOT COVER. Five fields are signed and no more:
+ * `Data.Amount.*` and `Data.Transaction.Card.*` are unsigned, so a captured
+ * valid delivery can be replayed with an altered amount and still verify.
+ * This is MyFatoorah's scheme, not a defect in this driver, and the
+ * consequence is bounded: the reported amount reaches only WebhookProcessor's
+ * deviation-tolerance check, where a tampered figure can force a deposit into
+ * a hold, and never the ledger credit, which reads the stored transaction
+ * amount rather than the webhook's. Recorded here so the next reader does not
+ * have to derive it again.
+ *
  * Only PAYMENT_STATUS_CHANGED is implemented, because it is the only event
  * this driver acts on; every other event is ACKed and dropped by the
  * controller before any signature work happens. The builder itself is
@@ -59,13 +69,28 @@ final class MyfatoorahSignatureService
     /**
      * The exact string MyFatoorah signed, built from the event's field list.
      *
+     * Throws rather than returning '' for an event with no field list. The
+     * provider guards with supports() first, but WebhookSimulator calls
+     * sign() directly with whatever `Event.Code` the payload carries — so a
+     * silent empty canonical string meant a test simulating a code-2 event
+     * got a signature over nothing at all, and looked like it had proved
+     * something.
+     *
      * @param  array<string, mixed>  $data  the webhook's `Data` object
+     *
+     * @throws \InvalidArgumentException for an event this driver has no field list for
      */
     public function canonical(int $eventCode, array $data): string
     {
+        if (! $this->supports($eventCode)) {
+            throw new \InvalidArgumentException(
+                "MyFatoorah event code {$eventCode} has no signed field list in this driver."
+            );
+        }
+
         $pairs = [];
 
-        foreach (self::SIGNED_FIELDS[$eventCode] ?? [] as $path) {
+        foreach (self::SIGNED_FIELDS[$eventCode] as $path) {
             $value = data_get($data, $path);
 
             // Null AND absent both become the empty string with the key kept.

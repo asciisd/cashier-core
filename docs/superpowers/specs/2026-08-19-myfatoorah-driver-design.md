@@ -451,10 +451,17 @@ takes its field order from the constant rather than from payload order.
 **Feature — `tests/Feature/Webhooks/MyfatoorahWebhookTest.php`**
 
 Valid signature; invalid signature; a tampered field; a signature from an
-unknown secret; a missing version header; a `v1` version header; an unhandled
-event code (ACKed, nothing dispatched); duplicate replay; out-of-order after
-`Succeeded`; unknown transaction; and — with two connections configured — that
-the second country's account is matched and rides through to the job.
+unknown secret; a missing version header; a `v1` version header; an unsupported
+version logged at `warning` rather than `critical`; an unhandled event code
+(ACKed, nothing dispatched); duplicate replay; a failed payment event; and —
+with two connections configured — that the second country's account is matched
+and rides through to the job.
+
+Deliberately NOT here: out-of-order-after-`Succeeded` and unknown-transaction.
+Both behaviours live entirely in `WebhookProcessor`, which owns them for every
+driver and covers them generically in `WebhookProcessorTest`; a MyFatoorah copy
+would assert the shared engine's rules through a second front door and claim
+driver coverage it does not have.
 
 ## Risks
 

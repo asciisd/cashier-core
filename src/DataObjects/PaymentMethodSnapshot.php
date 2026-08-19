@@ -26,15 +26,24 @@ readonly class PaymentMethodSnapshot
         );
     }
 
-    public static function fromCardData(string $brand, string $lastFour, ?string $displayName = null): self
+    /**
+     * `$lastFour` is nullable because the card rails carry instruments with
+     * no card number at all — KNET, and the wallet methods behind it. Passing
+     * `''` for those wrote an empty string into a nullable column, since
+     * PaymentMethodSnapshotAttributes::known() filters on `!== null` and an
+     * empty string survives it.
+     */
+    public static function fromCardData(string $brand, ?string $lastFour, ?string $displayName = null): self
     {
         $brandEnum = PaymentMethodBrand::tryFrom(strtolower($brand)) ?? PaymentMethodBrand::Other;
-        
+
         return new self(
             type: $brandEnum->getType(),
             brand: $brandEnum,
             lastFour: $lastFour,
-            displayName: $displayName ?? "{$brandEnum->label()} •••• {$lastFour}",
+            displayName: $displayName ?? ($lastFour === null
+                ? $brandEnum->label()
+                : "{$brandEnum->label()} •••• {$lastFour}"),
         );
     }
 

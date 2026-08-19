@@ -77,6 +77,23 @@ describe('canonical', function () {
         expect($this->service->canonical(MyfatoorahSignatureService::PAYMENT_STATUS_CHANGED, $reordered))
             ->toBe($this->service->canonical(MyfatoorahSignatureService::PAYMENT_STATUS_CHANGED, $data));
     });
+
+    /*
+     * Returning '' for an unknown code meant sign() produced a signature over
+     * the empty string. The provider guards with supports() first, but
+     * WebhookSimulator calls sign() directly with whatever Event.Code the
+     * payload carries — so a test simulating a code-2 event got a signature
+     * over nothing and looked like it had proved something.
+     */
+    it('refuses to build a canonical string for an event it has no field list for', function () {
+        expect(fn () => $this->service->canonical(2, myfatoorahPaymentEventData()))
+            ->toThrow(InvalidArgumentException::class, '2');
+    });
+
+    it('refuses to sign an event it has no field list for', function () {
+        expect(fn () => $this->service->sign(7, myfatoorahPaymentEventData()))
+            ->toThrow(InvalidArgumentException::class);
+    });
 });
 
 describe('sign', function () {

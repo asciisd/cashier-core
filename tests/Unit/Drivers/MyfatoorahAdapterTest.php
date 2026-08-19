@@ -6,6 +6,8 @@ use Asciisd\CashierCore\Drivers\Myfatoorah\MyfatoorahAdapter;
 use Asciisd\CashierCore\Enums\PaymentMethodBrand;
 use Asciisd\CashierCore\Enums\PaymentMethodType;
 use Asciisd\CashierCore\Enums\PaymentStatus;
+use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
+use Asciisd\CashierCore\Services\PaymentMethodSnapshotAttributes;
 
 beforeEach(function () {
     $this->adapter = new MyfatoorahAdapter;
@@ -197,7 +199,25 @@ describe('fromWebhook', function () {
         expect($snapshot->brand)->toBe(PaymentMethodBrand::Knet)
             ->and($snapshot->type)->toBe(PaymentMethodType::DebitCard)
             // Not "KNET •••• " — there is no card number on a KNET payment.
-            ->and($snapshot->displayName)->toBe('KNET');
+            ->and($snapshot->displayName)->toBe('KNET')
+            /*
+             * null, not ''. PaymentMethodSnapshotAttributes::known() filters
+             * on `!== null`, so an empty string survives the filter and
+             * writes a blank into a nullable column — a value that reads as
+             * "we know the last four and they are nothing".
+             */
+            ->and($snapshot->lastFour)->toBeNull();
+    });
+
+    it('keeps a card-less snapshot out of the persisted last-four column', function () {
+        $payload = myfatoorahWebhook();
+        $payload['Data']['Transaction']['Card'] = ['Number' => '', 'Brand' => 'KNET'];
+
+        $known = PaymentMethodSnapshotAttributes::known(
+            $this->adapter->fromWebhook($payload)->paymentMethodSnapshot
+        );
+
+        expect($known)->not->toHaveKey('payment_method_last_four');
     });
 
     it('omits the snapshot when there is no card object', function () {
@@ -267,6 +287,31 @@ describe('fromProviderResponse', function () {
         expect($result->status)->toBe(PaymentStatus::Succeeded)
             ->and($result->success)->toBeTrue()
             ->and($result->paymentMethodSnapshot?->brand)->toBe(PaymentMethodBrand::Mastercard);
+    });
+
+    /*
+     * envelope() guarantees `Data` is an array, not that it carries an
+     * InvoiceId. Reading it unguarded gave a PHP warning and
+     * `transactionId: ''` — a transaction persisted with no correlation key,
+     * which no webhook can ever match to the invoice MyFatoorah went on to
+     * collect.
+     */
+    it('refuses a create response carrying no InvoiceId', function () {
+        expect(fn () => $this->adapter->fromProviderResponse([
+            'PaymentURL' => 'https://demo.MyFatoorah.com/KWT/ie/01072630973041',
+            'PaymentCompleted' => false,
+            'amount' => 10.0,
+            'currency' => 'KWD',
+        ]))->toThrow(PaymentProcessingException::class, 'InvoiceId');
+    });
+
+    it('refuses a create response whose InvoiceId is blank', function () {
+        expect(fn () => $this->adapter->fromProviderResponse([
+            'InvoiceId' => '',
+            'PaymentCompleted' => false,
+            'amount' => 10.0,
+            'currency' => 'KWD',
+        ]))->toThrow(PaymentProcessingException::class, 'InvoiceId');
     });
 
     it('reports a completed-but-failed create as unsuccessful', function () {

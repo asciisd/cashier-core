@@ -186,15 +186,27 @@ it('rejects a v1 delivery rather than verifying it with the v2 rule', function (
  * A refund, deposit or supplier event. Acknowledged so MyFatoorah stops
  * retrying — a non-200 for a transient reason can lose an event permanently —
  * but nothing is dispatched and nothing is acted on.
+ *
+ * Built by hand rather than through WebhookSimulator: this driver has no
+ * field list for code 2, so there is no signature it could produce for one.
+ * It used to sign the empty string and this test passed on a signature that
+ * proved nothing — the controller ACKs an unhandled code before any
+ * verification runs, which is exactly what is being asserted here.
  */
 it('acknowledges an event it does not handle without dispatching anything', function () {
-    $delivery = WebhookSimulator::make('myfatoorah', myfatoorahEvent(code: 2));
-
-    $this->postJson($delivery->uri, $delivery->payload, $delivery->headers)
+    $this->postJson('/api/webhooks/myfatoorah', myfatoorahEvent(code: 2), [
+        'MyFatoorah-Signature' => 'not-verified-for-an-unhandled-event',
+        'MyFatoorah-Webhook-Version' => 'v2',
+    ])
         ->assertOk()
         ->assertJson(['status' => 'ok']);
 
     Queue::assertNothingPushed();
+});
+
+it('cannot be asked to simulate an event this driver has no field list for', function () {
+    expect(fn () => WebhookSimulator::make('myfatoorah', myfatoorahEvent(code: 2)))
+        ->toThrow(InvalidArgumentException::class);
 });
 
 it('acknowledges a duplicate delivery once and dispatches only the first', function () {

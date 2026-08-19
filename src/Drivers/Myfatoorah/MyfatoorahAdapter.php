@@ -10,6 +10,7 @@ use Asciisd\CashierCore\DataObjects\PaymentResult;
 use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
 use Asciisd\CashierCore\Enums\PaymentMethodBrand;
 use Asciisd\CashierCore\Enums\PaymentStatus;
+use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 
 class MyfatoorahAdapter implements PaymentAdapterInterface
 {
@@ -33,12 +34,32 @@ class MyfatoorahAdapter implements PaymentAdapterInterface
             ? $this->mapStatus($transaction['Status'] ?? null)
             : PaymentStatus::Pending;
 
+        // envelope() guarantees `Data` is an array, not that it holds an
+        // InvoiceId. Without this an absent key gives a PHP warning and
+        // `transactionId: ''`, which persists a transaction no webhook can
+        // ever correlate to — the invoice is created and paid at MyFatoorah
+        // with nothing on our side to attach it to.
+        $invoiceId = trim((string) ($response['InvoiceId'] ?? ''));
+
+        if ($invoiceId === '') {
+            throw new PaymentProcessingException('MyFatoorah accepted the payment but returned no InvoiceId.');
+        }
+
         return new PaymentResult(
+            // NOT `=== Succeeded`, unlike fromProviderPayload below, and not
+            // a discrepancy. PaymentService::createTransactionRecord() stamps
+            // `failed_at` and `error_message` from `isFailed()`, i.e. from
+            // `! success` alone — so a Pending hosted-page charge reporting
+            // success: false would be written to the database as failed the
+            // moment it is created. Every sibling adapter hard-codes `true`
+            // here for that reason; `!== Failed` is that, minus MyFatoorah's
+            // one case where the create response already carries a decided
+            // failure (PaymentCompleted with a FAILED transaction).
             success: $status !== PaymentStatus::Failed,
             // InvoiceId, never PaymentId: PaymentId is null on every
             // redirect-flow create response, so it cannot be the key
             // `provider_transaction_id` is set from or webhooks correlate on.
-            transactionId: (string) $response['InvoiceId'],
+            transactionId: $invoiceId,
             status: $status,
             amount: (int) round((float) ($response['amount'] ?? 0)),
             currency: (string) ($response['currency'] ?? config('cashier-core.currency.default', 'USD')),
@@ -234,8 +255,14 @@ class MyfatoorahAdapter implements PaymentAdapterInterface
             'myfatoorah_transaction_status' => $transaction['Status'] ?? null,
             'myfatoorah_payment_id' => $transaction['PaymentId'] ?? null,
             'myfatoorah_payment_method' => $transaction['PaymentMethod'] ?? null,
-            // The merchant settlement, which reaches the fee-drift check
-            // through metadata rather than through the reported amount.
+            // The merchant settlement, recorded for reconciliation only. It
+            // is NOT wired to the fee-drift check:
+            // WebhookProcessor::reportedSettlement() reads
+            // settlement_reported_amount, payport_merchant_amount,
+            // aps_amount_out and sticpay_merchant_amount, none of which this
+            // is. Wiring it up would need care rather than a rename —
+            // ReceivableAmount is in the account's BASE currency, so it is
+            // only comparable when base == display.
             'myfatoorah_receivable_amount' => $amount['ReceivableAmount'] ?? null,
             'myfatoorah_service_charge' => $amount['ServiceCharge'] ?? null,
         ], fn ($value) => $value !== null);
@@ -289,8 +316,11 @@ class MyfatoorahAdapter implements PaymentAdapterInterface
         }
 
         // "512345xxxxxx0008" — the last four are the only digits we keep.
+        // null, NOT '': PaymentMethodSnapshotAttributes::known() filters on
+        // `!== null`, so an empty string survives the filter and writes a
+        // blank into a nullable column.
         $number = preg_replace('/\D/', '', (string) ($card['Number'] ?? '')) ?? '';
-        $lastFour = strlen($number) >= 4 ? substr($number, -4) : '';
+        $lastFour = strlen($number) >= 4 ? substr($number, -4) : null;
 
         $brandValue = str_replace(' ', '_', strtolower($brand));
 
@@ -301,7 +331,7 @@ class MyfatoorahAdapter implements PaymentAdapterInterface
             // ("Mastercard •••• 0008"). KNET and the wallet rails arrive with
             // no number at all, and "KNET •••• " reads as a bug in every
             // admin panel it is rendered in.
-            displayName: $lastFour === ''
+            displayName: $lastFour === null
                 ? (PaymentMethodBrand::tryFrom($brandValue) ?? PaymentMethodBrand::Other)->label()
                 : null,
         );
