@@ -1,6 +1,6 @@
 ---
 name: cashier-core-development
-description: "Build on and extend the asciisd/cashier-core v2 payment engine. Activates when working with named connections and drivers, ConnectionRegistry or Connections, PaymentService charges/refunds/sync, the webhook pipeline (WebhookProcessor, ReplayGuard, TransferClaim, WebhookRelay), the approve-first WithdrawalWorkflow, the FundsLedger / CustomerContract / PreparesChargeData / ProvidesWebhookTransactionId / ResolvesFundingAccount / FeeConfigurationContract contracts, fee calculation and settlement, the bundled APS/Jenapay/Heropayment/Payport/Sticpay drivers, payload sanitizing and encryption, cashier:* artisan commands, or the Cashier::fake / WebhookSimulator / FakeLedger testing seams."
+description: "Build on and extend the asciisd/cashier-core v2 payment engine. Activates when working with named connections and drivers, ConnectionRegistry or Connections, PaymentService charges/refunds/sync, the webhook pipeline (WebhookProcessor, ReplayGuard, TransferClaim, WebhookRelay), the approve-first WithdrawalWorkflow, the FundsLedger / CustomerContract / PreparesChargeData / ProvidesWebhookTransactionId / ResolvesFundingAccount / FeeConfigurationContract contracts, fee calculation and settlement, the bundled APS/Jenapay/Heropayment/Payport/Sticpay/MyFatoorah drivers, payload sanitizing and encryption, cashier:* artisan commands, or the Cashier::fake / WebhookSimulator / FakeLedger testing seams."
 ---
 
 # Cashier Core Development (v2)
@@ -13,7 +13,7 @@ PCI posture. The host owns its users, its funds system, and every side effect (m
 
 **Namespace:** `Asciisd\CashierCore` · **Requires:** PHP ^8.3, Laravel ^11|^12|^13
 
-Five direct PSP drivers ship bundled — **APS, Jenapay, Heropayment, Payport, Sticpay** — plus
+Six direct PSP drivers ship bundled — **APS, Jenapay, Heropayment, Payport, Sticpay, MyFatoorah** — plus
 internal `manual`, `bank_transfer`, `crypto`. All are hosted-redirect (SAQ-A: no PAN/CVV in the app).
 Paytiko and KNET are separate plugins that register their drivers into this core.
 
@@ -53,7 +53,7 @@ Services/
 └── Webhooks/{WebhookProcessor, ReplayGuard, WebhookRelay}
 Withdrawals/WithdrawalWorkflow — request / approve / reject / markPaid / cancel
 Fees/{FeeCalculator, FeeBreakdown, SettledAmount, SettledAmountResolver}
-Drivers/{Aps, Jenapay, Heropayment, Payport, Sticpay, Internal}
+Drivers/{Aps, Jenapay, Heropayment, Payport, Sticpay, Myfatoorah, Internal}
 Http/Controllers/Webhooks/*    — one per bundled driver, all sharing the pipeline
 Jobs/{ProcessPaymentProviderWebhook, RelayWebhook}
 Models/{Transaction, Refund, WebhookEvent, AdminAction}
@@ -92,6 +92,16 @@ refunds and syncs use the exact account that took the charge.
         // webhooks.aps routes) and checkout_host_map (card URL host rewrite).
     ],
     'aps_binance' => ['driver' => 'aps', /* second merchant account's creds */],
+    // MyFatoorah is one API key per COUNTRY, sent to that country's host.
+    // A merchant trading in two countries is two connections.
+    'myfatoorah' => [
+        'driver' => 'myfatoorah',
+        'base_url' => env('MYFATOORAH_BASE_URL'),
+        'api_key' => env('MYFATOORAH_API_KEY'),
+        'webhook_secret' => env('MYFATOORAH_WEBHOOK_SECRET'),
+        'currency' => 'KWD',            // MyFatoorah cannot charge USD
+        'payment_method' => 'KNET',     // omit for MyFatoorah's own picker
+    ],
 ],
 
 'drivers' => [],   // bundled + plugin drivers merge in automatically
