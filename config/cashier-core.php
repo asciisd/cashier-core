@@ -70,6 +70,53 @@ return [
     |     'deposit_method' => env('APS_APPLEPAY_DEPOSIT_METHOD'),
     | ],
     |
+    | MyFatoorah is one API key per COUNTRY, and the key must be sent to that
+    | country's host — api.myfatoorah.com serves Kuwait, Bahrain, Oman and
+    | Jordan, while Saudi Arabia, the UAE, Qatar and Egypt each have their
+    | own. Every country shares the apitest.myfatoorah.com sandbox. The
+    | authoritative host map is a public JSON file,
+    | https://portal.myfatoorah.com/Files/API/mf-config.json — read it to fill
+    | `base_url` in, but the package does not fetch it.
+    |
+    | 'myfatoorah' => [
+    |     'driver' => 'myfatoorah',
+    |     'base_url' => env('MYFATOORAH_BASE_URL'),
+    |     'api_key' => env('MYFATOORAH_API_KEY'),
+    |     // Required. Enabled per webhook in the portal as the "secure key",
+    |     // and mandatory for V2 deliveries. The connection will not resolve
+    |     // without it: a blank secret is still a working HMAC key, and every
+    |     // field the signature covers is public, so anyone could forge a
+    |     // callback that verifies.
+    |     'webhook_secret' => env('MYFATOORAH_WEBHOOK_SECRET'),
+    |     // Required. MyFatoorah cannot charge USD: Order.Currency accepts
+    |     // only SAR, BHD, AED, QAR, OMR, KWD, JOD and EGP. The driver
+    |     // overrides the pinned default with this, and refuses to resolve
+    |     // when it is missing or unsupported.
+    |     'currency' => env('MYFATOORAH_CURRENCY', 'KWD'),
+    |     // Optional. CARD | KNET | APPLE_PAY | GOOGLE_PAY. Omit to land the
+    |     // customer on MyFatoorah's own picker showing every method enabled
+    |     // on the account — the docs are ambiguous about whether the picker
+    |     // is reachable for redirection flows, so confirm it in the sandbox
+    |     // before leaving this unset in production.
+    |     'payment_method' => env('MYFATOORAH_PAYMENT_METHOD'),
+    |     // Optional — these fall back to the `payment.success` and
+    |     // `cashier.webhooks.myfatoorah` routes where the host defines them.
+    |     'redirect_url' => env('MYFATOORAH_REDIRECT_URL'),
+    |     'webhook_url' => env('MYFATOORAH_WEBHOOK_URL'),
+    |     // Optional. EN | AR. Defaults to the customer's cashierLocale().
+    |     'language' => env('MYFATOORAH_LANGUAGE'),
+    | ],
+    |
+    | A second country is another connection on the same driver:
+    |
+    | 'myfatoorah_sau' => [
+    |     'driver' => 'myfatoorah',
+    |     'base_url' => 'https://apisa.myfatoorah.com',
+    |     'api_key' => env('MYFATOORAH_SAU_API_KEY'),
+    |     'webhook_secret' => env('MYFATOORAH_SAU_WEBHOOK_SECRET'),
+    |     'currency' => 'SAR',
+    | ],
+    |
     */
     'connections' => [],
 

@@ -37,7 +37,12 @@ enum PaymentMethodBrand: string
     case Etisalat = 'etisalat';
     case InstaPay = 'instapay';
     case ValU = 'valu';
-    
+
+    // KNET is Kuwait's national debit network, and MyFatoorah's most-used
+    // method in that market. Without its own case it lands on Other, which
+    // renders as "Other" in every admin panel and payment-method picker.
+    case Knet = 'knet';
+
     // Bank Transfers
     case WireTransfer = 'wire_transfer';
     case SEPA = 'sepa';
@@ -85,7 +90,8 @@ enum PaymentMethodBrand: string
             self::Etisalat => 'Etisalat Cash',
             self::InstaPay => 'InstaPay',
             self::ValU => 'valU',
-            
+            self::Knet => 'KNET',
+
             // Bank Transfers
             self::WireTransfer => 'Wire Transfer',
             self::SEPA => 'SEPA Transfer',
@@ -104,9 +110,10 @@ enum PaymentMethodBrand: string
     public function getType(): PaymentMethodType
     {
         return match ($this) {
-            self::Visa, self::Mastercard, self::AmericanExpress, 
+            self::Visa, self::Mastercard, self::AmericanExpress,
             self::Discover, self::JCB, self::DinersClub, self::UnionPay => PaymentMethodType::CreditCard,
-            
+            self::Knet => PaymentMethodType::DebitCard,
+
             self::ApplePay, self::GooglePay, self::SamsungPay, self::PayPal,
             self::AliPay, self::WeChat, self::Fawry, self::Vodafone, 
             self::Orange, self::Etisalat, self::InstaPay, self::ValU => PaymentMethodType::DigitalWallet,

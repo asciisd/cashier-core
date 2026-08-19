@@ -177,6 +177,16 @@ final class Cashier
                 'callback_url' => 'https://members.example.com/api/webhooks/sticpay',
                 'confirm_with_detail_api' => false,
             ],
+            'myfatoorah' => [
+                // Every country shares this sandbox; the live host is per
+                // country and the API key belongs to exactly one of them.
+                'base_url' => 'https://apitest.myfatoorah.com',
+                'api_key' => "{$name}-api-key",
+                'webhook_secret' => "{$name}-webhook-secret",
+                'currency' => 'KWD',
+                'redirect_url' => 'https://members.example.com/payment/success',
+                'webhook_url' => 'https://members.example.com/api/webhooks/myfatoorah',
+            ],
             default => [],
         };
 

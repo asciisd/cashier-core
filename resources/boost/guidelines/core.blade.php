@@ -5,7 +5,7 @@ pipeline (signature enforcement, replay guard, row-locked transitions, amount-de
 approve-first withdrawal workflow with an audit trail, and a `FundsLedger` contract that keeps the
 host's funds system (MT5, wallet, banking core) behind an interface the host owns.
 
-Five direct PSP drivers ship bundled — **APS, Jenapay, Heropayment, Payport, Sticpay** — plus
+Six direct PSP drivers ship bundled — **APS, Jenapay, Heropayment, Payport, Sticpay, MyFatoorah** — plus
 internal `manual`, `bank_transfer` and `crypto` providers. All are hosted-redirect: no PAN or CVV
 touches the application (SAQ-A posture). Paytiko and KNET are separate plugins
 (`asciisd/cashier-paytiko`, `asciisd/knet`) that register their drivers into this core.
