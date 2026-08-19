@@ -6,6 +6,7 @@ namespace Asciisd\CashierCore\Testing;
 
 use Asciisd\CashierCore\Connections\Connections;
 use Asciisd\CashierCore\Drivers\Jenapay\JenapayHashService;
+use Asciisd\CashierCore\Drivers\Myfatoorah\MyfatoorahSignatureService;
 use Asciisd\CashierCore\Drivers\Payport\PayportSignatureService;
 use Asciisd\CashierCore\Drivers\Sticpay\SticpaySignatureService;
 use InvalidArgumentException;
@@ -58,6 +59,8 @@ final class WebhookSimulator
                 ),
             ], 'json'),
 
+            'myfatoorah' => self::myfatoorah($uri, $payload, $config),
+
             'jenapay' => self::jenapay($uri, $payload, $config),
             'payport' => self::payport($uri, $payload, $config),
             'sticpay' => self::sticpay($uri, $payload, $config),
@@ -83,6 +86,29 @@ final class WebhookSimulator
         );
 
         return new SignedWebhook($uri, $payload, [], 'form');
+    }
+
+    /**
+     * MyFatoorah signs a canonical field list, not the body, and carries the
+     * version in a header the docs never mention — a controller that does not
+     * read it cannot know which of the two signing rules applies.
+     *
+     * @param  array<string, mixed>  $payload
+     * @param  array<string, mixed>  $config
+     */
+    private static function myfatoorah(string $uri, array $payload, array $config): SignedWebhook
+    {
+        $service = new MyfatoorahSignatureService((string) ($config['webhook_secret'] ?? ''));
+
+        $signature = $service->sign(
+            (int) data_get($payload, 'Event.Code', 0),
+            (array) ($payload['Data'] ?? []),
+        );
+
+        return new SignedWebhook($uri, $payload, [
+            'MyFatoorah-Signature' => $signature,
+            'MyFatoorah-Webhook-Version' => 'v2',
+        ], 'json');
     }
 
     /**
