@@ -7,6 +7,7 @@ use Asciisd\CashierCore\Drivers\Myfatoorah\MyfatoorahProvider;
 use Asciisd\CashierCore\Enums\PaymentStatus;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Sleep;
 
 function myfatoorahConfig(array $overrides = []): array
 {
@@ -275,20 +276,55 @@ describe('retrieve and getPaymentStatus', function () {
             ->and($result->transactionId)->toBe('6551972');
     });
 
-    it('returns null for an invoice MyFatoorah does not know', function () {
-        Http::fake(['*' => Http::response(['IsSuccess' => false, 'Message' => 'No invoices match this InvoiceId'])]);
+    /*
+     * The "No invoices match this InvoiceId" message means EITHER an unknown
+     * invoice OR a real invoice with no payment attempt yet — api-v3.md says
+     * so explicitly, and nothing in the response tells the two apart. Every
+     * provider_transaction_id we hold came back from a successful
+     * create-payment, so it is a healthy pending deposit. Reporting it as
+     * missing made syncTransaction() log transactionNotFoundAtProvider and
+     * return false for every one of them.
+     */
+    it('reports a healthy unattempted invoice as pending, not missing', function () {
+        Http::fake(['*/v3/invoices/6600001' => Http::response([
+            'IsSuccess' => false,
+            'Message' => 'No invoices match this InvoiceId',
+        ])]);
 
-        expect((new MyfatoorahProvider(myfatoorahConfig()))->retrieve('404404'))->toBeNull();
+        $result = (new MyfatoorahProvider(myfatoorahConfig()))->retrieve('6600001');
+
+        expect($result)->not->toBeNull()
+            ->and($result->status)->toBe(PaymentStatus::Pending)
+            ->and($result->transactionId)->toBe('6600001')
+            ->and($result->success)->toBeFalse();
     });
 
     it('reports the raw provider status string', function () {
         expect((new MyfatoorahProvider(myfatoorahConfig()))->getPaymentStatus('6551972'))->toBe('SUCCESS');
     });
 
-    it('reports unknown when the invoice cannot be read', function () {
-        Http::fake(['*' => Http::response(['IsSuccess' => false, 'Message' => 'No invoices match this InvoiceId'])]);
+    it('reports PENDING rather than unknown for an unattempted invoice', function () {
+        Http::fake(['*/v3/invoices/6600001' => Http::response([
+            'IsSuccess' => false,
+            'Message' => 'No invoices match this InvoiceId',
+        ])]);
 
-        expect((new MyfatoorahProvider(myfatoorahConfig()))->getPaymentStatus('404404'))->toBe('unknown');
+        expect((new MyfatoorahProvider(myfatoorahConfig()))->getPaymentStatus('6600001'))->toBe('PENDING');
+    });
+
+    /*
+     * A genuine failure still has to come back null, or a dead gateway would
+     * look like a wall of healthy pending deposits.
+     */
+    it('returns null and reports unknown when the lookup genuinely fails', function () {
+        Sleep::fake();
+
+        Http::fake(['*/v3/invoices/6600002' => Http::response('gateway down', 502)]);
+
+        $provider = new MyfatoorahProvider(myfatoorahConfig());
+
+        expect($provider->retrieve('6600002'))->toBeNull()
+            ->and($provider->getPaymentStatus('6600002'))->toBe('unknown');
     });
 });
 

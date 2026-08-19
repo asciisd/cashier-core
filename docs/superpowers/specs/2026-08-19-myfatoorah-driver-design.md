@@ -351,12 +351,43 @@ An invoice holds an **array** of transactions, one per attempt, and
    `Status` and `Error`.
 3. With no transactions at all, fall back to `Data.Invoice.Status`.
 
-MyFatoorah answers an unknown invoice with `"Message": "No invoices match this
-InvoiceId"` rather than a 404, so the client checks the envelope, logs via
-`PaymentLogger::providerTransactionLookupFailed()` and returns `null` — the
-contract `retrieve()` expects.
+### The no-transactions message
 
-`getPaymentStatus()` returns the raw provider string from the same lookup.
+**Spec defect, corrected.** An earlier draft of step 3 assumed the API returns
+a normal envelope carrying an empty `Transactions` array. It does not.
+`api-v3.md`, in the 🚧 note above the Get-Invoice-by-InvoiceId definition:
+
+> If the invoice doesn't exist **OR** the invoice exists but has no
+> transactions, the API will return the `"Message": "No invoices match this
+> InvoiceId"`.
+
+One message, two meanings, and nothing in the response distinguishes them. So
+a real invoice with no payment attempt yet arrives as an `IsSuccess: false`
+rejection. Taken at face value that made `getInvoice()` return `null`,
+`syncTransaction()` log `transactionNotFoundAtProvider` and return false for
+every healthy pending deposit, and `MyfatoorahClient` log
+`providerTransactionLookupFailed` at warning for each one — while step 3's
+branch in the adapter was unreachable in production.
+
+**Decided: treat this message as Pending.** Every `provider_transaction_id`
+this driver holds came back from a successful create-payment, so the invoice
+does exist and "no attempts yet" is the realistic reading. `getInvoice()`
+recognises the message and returns
+`['Invoice' => ['Id' => $invoiceId, 'Status' => 'PENDING'], 'Transactions' => []]`,
+logged at info because it is a normal state, not a lookup failure. Step 3's
+branch is what consumes it, and is now reachable.
+
+The cost of the decision is bounded and one-directional: an invoice MyFatoorah
+genuinely does not know reports Pending rather than missing, which leaves a
+stale row pending instead of flagging it. Nothing is credited either way.
+
+Genuine failures — HTTP errors, other envelope rejections, non-JSON bodies —
+still return `null` and still log via
+`PaymentLogger::providerTransactionLookupFailed()`, which carries both the
+envelope's assembled message and the truncated raw body.
+
+`getPaymentStatus()` returns the raw provider string from the same lookup, so
+the unattempted case reports `PENDING` rather than `unknown`.
 
 Sync matters more than usual here: `pitfalls.md` entry 12 notes V1 retries give
 up permanently and V2's are capped at 5, so a webhook can be lost for good.

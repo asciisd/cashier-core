@@ -6,6 +6,7 @@ use Asciisd\CashierCore\Drivers\Myfatoorah\MyfatoorahClient;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Sleep;
 
 beforeEach(function () {
     $this->client = new MyfatoorahClient('https://apitest.myfatoorah.com', 'test-api-key');
@@ -199,22 +200,74 @@ describe('getInvoice', function () {
     });
 
     /*
-     * MyFatoorah answers an unknown invoice with a 200 and a Message, not a
-     * 404. retrieve() must get null so PaymentService reports "not found at
-     * provider" rather than throwing mid-sync.
+     * api-v3.md, the 🚧 note above Get Invoice by InvoiceId: "If the invoice
+     * doesn't exist OR the invoice exists but has no transactions, the API
+     * will return the 'Message': 'No invoices match this InvoiceId'." One
+     * message, two meanings.
+     *
+     * Every provider_transaction_id this driver holds came back from a
+     * successful create-payment, so the invoice exists and "no attempts yet"
+     * is the realistic reading. Returning null instead made syncTransaction()
+     * report transactionNotFoundAtProvider for every healthy pending deposit.
      */
-    it('returns null when MyFatoorah does not know the invoice', function () {
+    it('reads the no-transactions message as a known but unattempted invoice', function () {
         Http::fake(['*' => Http::response([
             'IsSuccess' => false,
             'Message' => 'No invoices match this InvoiceId',
         ])]);
 
-        expect($this->client->getInvoice('404404'))->toBeNull();
+        expect($this->client->getInvoice('6551972'))->toBe([
+            'Invoice' => ['Id' => '6551972', 'Status' => 'PENDING'],
+            'Transactions' => [],
+        ]);
+    });
+
+    it('logs the unattempted invoice at info, never as a lookup failure', function () {
+        Log::spy();
+        Log::shouldReceive('channel')->andReturnSelf();
+
+        Http::fake(['*' => Http::response([
+            'IsSuccess' => false,
+            'Message' => 'No invoices match this InvoiceId',
+        ])]);
+
+        $this->client->getInvoice('6551972');
+
+        Log::shouldNotHaveReceived('warning');
+        Log::shouldHaveReceived('info')->withArgs(
+            fn (string $message, array $context) => str_contains($message, 'no transactions on this invoice yet')
+                && $context['provider_transaction_id'] === '6551972'
+        );
+    });
+
+    it('still returns null for an envelope rejection that is not the no-transactions one', function () {
+        Http::fake(['*' => Http::response([
+            'IsSuccess' => false,
+            'ValidationErrors' => [['Name' => 'InvoiceId', 'Error' => 'is not valid']],
+        ])]);
+
+        expect($this->client->getInvoice('not-an-id'))->toBeNull();
     });
 
     it('returns null on an HTTP failure rather than throwing', function () {
+        // PspHttp::idempotent() retries twice with a 250ms backoff; without
+        // this the test sleeps for real.
+        Sleep::fake();
+
+        Log::spy();
+        Log::shouldReceive('channel')->andReturnSelf();
+
         Http::fake(['*' => Http::response('gateway down', 502)]);
 
         expect($this->client->getInvoice('6551972'))->toBeNull();
+
+        // The bound exception used to go unused, so the envelope's own
+        // diagnosis never reached the log line.
+        Log::shouldHaveReceived('warning')->withArgs(
+            fn (string $message, array $context) => $message === 'Provider transaction lookup failed'
+                && $context['http_status'] === 502
+                && str_contains($context['body'], 'non-JSON response (502)')
+                && str_contains($context['body'], 'gateway down')
+        );
     });
 });

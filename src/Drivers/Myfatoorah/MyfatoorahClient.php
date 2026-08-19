@@ -9,6 +9,7 @@ use Asciisd\CashierCore\Logging\PaymentLogger;
 use Asciisd\CashierCore\Support\PspHttp;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
@@ -24,6 +25,12 @@ use Illuminate\Support\Str;
  */
 final class MyfatoorahClient
 {
+    /**
+     * The message MyFatoorah answers with when an invoice has no
+     * transactions to report — see noAttemptsPayload().
+     */
+    private const NO_TRANSACTIONS_MESSAGE = 'no invoices match this invoiceid';
+
     public function __construct(
         private readonly string $baseUrl,
         private readonly string $apiKey,
@@ -68,14 +75,13 @@ final class MyfatoorahClient
     }
 
     /**
-     * Fetch an invoice with its transaction array. Returns null when
-     * MyFatoorah does not know it.
+     * Fetch an invoice with its transaction array. Returns null when the
+     * lookup genuinely failed.
      *
      * Keyed by InvoiceId rather than PaymentId: PaymentId is null on every
      * redirect-flow create response, so it is not an id we reliably hold.
-     * An unknown invoice comes back as a 200 with `"Message": "No invoices
-     * match this InvoiceId"`, not a 404, which is why the envelope decides
-     * this rather than the status code.
+     * A rejection comes back as a 200 with a `Message`, not a 404, which is
+     * why the envelope decides this rather than the status code.
      *
      * @return array<string, mixed>|null
      */
@@ -86,15 +92,72 @@ final class MyfatoorahClient
         try {
             return $this->envelope($response);
         } catch (PaymentProcessingException $e) {
+            if (self::hasNoTransactions($response)) {
+                // A normal state, not a lookup failure — info, never warning.
+                Log::info('cashier-core: MyFatoorah reports no transactions on this invoice yet', [
+                    'driver' => 'myfatoorah',
+                    'provider_transaction_id' => $invoiceId,
+                ]);
+
+                return self::noAttemptsPayload($invoiceId);
+            }
+
             PaymentLogger::providerTransactionLookupFailed(
                 'myfatoorah',
                 $invoiceId,
                 $response->status(),
-                Str::limit($response->body(), 500),
+                // The parsed reason as well as the body: for shape 4 and the
+                // HTML shapes they say different things, and the assembled
+                // message is the only place the envelope's own diagnosis
+                // survives.
+                $e->getMessage().' | '.Str::limit($response->body(), 500),
             );
 
             return null;
         }
+    }
+
+    /**
+     * Whether this rejection is the "no transactions" one.
+     *
+     * `api-v3.md`, the 🚧 note above Get Invoice by InvoiceId: "If the invoice
+     * doesn't exist OR the invoice exists but has no transactions, the API
+     * will return the 'Message': 'No invoices match this InvoiceId'." One
+     * message, two meanings, and nothing in the response distinguishes them.
+     */
+    private static function hasNoTransactions(Response $response): bool
+    {
+        $body = $response->json();
+
+        if (! is_array($body)) {
+            return false;
+        }
+
+        return str_contains(
+            strtolower(trim((string) ($body['Message'] ?? ''))),
+            self::NO_TRANSACTIONS_MESSAGE,
+        );
+    }
+
+    /**
+     * A known invoice nobody has tried to pay yet.
+     *
+     * DECIDED, not inferred: every `provider_transaction_id` this driver
+     * holds came back from a successful create-payment, so the invoice does
+     * exist and "no attempts yet" is the only realistic reading of the
+     * ambiguous message. Returning null instead made `syncTransaction()` log
+     * `transactionNotFoundAtProvider` and return false for every healthy
+     * pending deposit, and made the adapter's no-transactions branch
+     * unreachable in production.
+     *
+     * @return array<string, mixed>
+     */
+    private static function noAttemptsPayload(string $invoiceId): array
+    {
+        return [
+            'Invoice' => ['Id' => $invoiceId, 'Status' => 'PENDING'],
+            'Transactions' => [],
+        ];
     }
 
     /**
