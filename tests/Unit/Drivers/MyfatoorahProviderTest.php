@@ -77,6 +77,16 @@ describe('construction', function () {
     });
 
     /*
+     * `MYFATOORAH_WEBHOOK_SECRET=" "` reads as a non-empty string, so an
+     * `=== ''` guard passes it and the connection resolves with a guessable
+     * HMAC key — the same forged-callback hole, one space wide.
+     */
+    it('refuses a connection whose webhook secret is only whitespace', function () {
+        expect(fn () => new MyfatoorahProvider(myfatoorahConfig(['webhook_secret' => '   '])))
+            ->toThrow(PaymentProcessingException::class, 'webhook secret');
+    });
+
+    /*
      * MyFatoorah cannot charge USD, so a connection with no currency would
      * charge in whatever PaymentService pinned and be rejected as an opaque
      * ValidationError on the first live charge.

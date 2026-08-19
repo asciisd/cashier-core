@@ -119,8 +119,9 @@ final class MyfatoorahSignatureService
         // hash_hmac with an empty key is a perfectly valid HMAC, and every
         // input to the canonical string is public, so under a blank secret an
         // attacker can compute a signature that verifies. Nothing verifies
-        // under a blank key.
-        if ($this->secret === '') {
+        // under a blank key — and a whitespace-only key is blank for this
+        // purpose, being both non-secret and trivially guessable.
+        if (trim($this->secret) === '') {
             return false;
         }
 

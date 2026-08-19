@@ -159,6 +159,21 @@ describe('verify', function () {
             ->and($blank->verify(MyfatoorahSignatureService::PAYMENT_STATUS_CHANGED, $data, $forged))->toBeFalse();
     });
 
+    /*
+     * A whitespace-only secret is a non-empty HMAC key, so the `=== ''` check
+     * alone let it through — but it is not a secret. An operator who wrote
+     * `MYFATOORAH_WEBHOOK_SECRET=" "` meant "unset", and a guessable key
+     * reopens the same forged-callback hole the empty one did.
+     */
+    it('verifies nothing when the secret is only whitespace', function () {
+        $blank = new MyfatoorahSignatureService('   ');
+        $data = myfatoorahPaymentEventData();
+
+        $forged = $blank->sign(MyfatoorahSignatureService::PAYMENT_STATUS_CHANGED, $data);
+
+        expect($blank->verify(MyfatoorahSignatureService::PAYMENT_STATUS_CHANGED, $data, $forged))->toBeFalse();
+    });
+
     it('rejects an empty signature', function () {
         expect($this->service->verify(MyfatoorahSignatureService::PAYMENT_STATUS_CHANGED, myfatoorahPaymentEventData(), ''))->toBeFalse();
     });

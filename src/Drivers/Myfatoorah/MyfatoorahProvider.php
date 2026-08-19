@@ -67,7 +67,10 @@ class MyfatoorahProvider implements PaymentProcessorInterface, PreparesChargeDat
         // compute themselves, verifyWebhookSignature() accepts it, and a
         // forged SUCCESS credits the ledger. Refusing to resolve is the only
         // safe reading of a missing secret.
-        if ((string) ($config['webhook_secret'] ?? '') === '') {
+        // Trimmed, so a whitespace-only value is refused too: ` ` is a
+        // non-empty key, but it is a guessable one, and an operator who set it
+        // meant "unset" every time.
+        if (trim((string) ($config['webhook_secret'] ?? '')) === '') {
             throw new PaymentProcessingException('MyFatoorah connection has no webhook secret configured.');
         }
 
