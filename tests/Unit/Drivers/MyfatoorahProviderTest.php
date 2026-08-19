@@ -231,6 +231,34 @@ describe('charge', function () {
             && $request['IntegrationUrls']['Webhook'] !== '');
     });
 
+    /*
+     * `routes.name_prefix` is host-configurable, and an application that took
+     * over callback URLs already registered with its PSPs commonly sets it to
+     * `webhooks.` — the package default is `cashier.webhooks.`. Hardcoding
+     * either prefix makes this fallback dead code in half of all installs,
+     * and the failure is invisible: MyFatoorah just uses whatever the portal
+     * has configured, which may be nothing.
+     */
+    it('finds its webhook route under a host-customised name prefix', function () {
+        config()->set('cashier-core.routes.name_prefix', 'webhooks.');
+
+        // A DISTINCT path, deliberately: the package's own route is still
+        // registered under the default prefix in this test app, and if both
+        // sat at /api/webhooks/myfatoorah the assertion below would pass
+        // whichever name the driver resolved — proving nothing.
+        //
+        // The name lookup is built once, so a route added mid-test is
+        // invisible to the URL generator until it is refreshed.
+        Illuminate\Support\Facades\Route::post('psp/callbacks/myfatoorah', fn () => null)
+            ->name('webhooks.myfatoorah');
+        Illuminate\Support\Facades\Route::getRoutes()->refreshNameLookups();
+
+        (new MyfatoorahProvider(myfatoorahConfig(['webhook_url' => null])))
+            ->charge(['amount' => 100.0]);
+
+        Http::assertSent(fn ($request) => $request['IntegrationUrls']['Webhook'] === route('webhooks.myfatoorah'));
+    });
+
     it('derives the language from the customer locale when unconfigured', function () {
         $provider = new MyfatoorahProvider(myfatoorahConfig());
         $data = $provider->prepareChargeData(myfatoorahCustomer(), 'myfatoorah', ['amount' => 100.0]);
