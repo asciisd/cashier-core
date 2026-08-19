@@ -16,7 +16,7 @@
 - Namespace `Asciisd\CashierCore\Drivers\Myfatoorah`. Class prefix `Myfatoorah` (one capital), matching `Heropayment`.
 - Driver string, route segment and `getName()` are all `myfatoorah`.
 - Every PHP file starts `<?php` then a blank line then `declare(strict_types=1);`.
-- Use `Asciisd\CashierCore\Logging\PaymentLogger`, never the `Log::` facade, except in the webhook controller's version gate where `Log::critical` matches `EnforcesSignatureVerification`'s existing usage.
+- Use `Asciisd\CashierCore\Logging\PaymentLogger` for anything it already has a method for. The webhook controller's own diagnostics — the version gate and the unhandled-event drop — use the `Log::` facade directly, because `PaymentLogger` has no method for either and `EnforcesSignatureVerification` already logs that way. Do not add `PaymentLogger` methods for them.
 - Use `Asciisd\CashierCore\Support\PspHttp::client()` for POSTs and `PspHttp::idempotent()` for GETs. Charge POSTs must never retry.
 - Never merge the V2 and V3 status vocabularies into one case-insensitive table (`pitfalls.md` entries 1–2).
 - Run tests with `vendor/bin/pest`. Filter with `--filter`.
