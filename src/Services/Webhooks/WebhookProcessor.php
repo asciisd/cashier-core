@@ -281,15 +281,25 @@ class WebhookProcessor
             return null;
         }
 
-        if ($update->currency !== null && strcasecmp($update->currency, (string) $transaction->currency) !== 0) {
-            return "currency mismatch: webhook reports {$update->currency}, transaction is {$transaction->currency}";
+        // A foreign charge is invoiced, reported and reconciled in the charge
+        // currency — the account currency never reaches the PSP at all.
+        // Comparing the callback against the account-currency figure would put
+        // every one of them on hold.
+        $hasChargeLeg = $transaction->charge_currency !== null && $transaction->charge_amount !== null;
+
+        $expectedCurrency = $hasChargeLeg ? $transaction->charge_currency : $transaction->currency;
+
+        if ($update->currency !== null && strcasecmp($update->currency, (string) $expectedCurrency) !== 0) {
+            return "currency mismatch: webhook reports {$update->currency}, transaction is {$expectedCurrency}";
         }
 
         if ($update->amount === null) {
             return null;
         }
 
-        $expected = (float) ($transaction->requested_amount ?? $transaction->amount);
+        $expected = $hasChargeLeg
+            ? (float) $transaction->charge_amount
+            : (float) ($transaction->requested_amount ?? $transaction->amount);
 
         if ($expected <= 0.0) {
             return null;
