@@ -42,6 +42,14 @@ return new class extends Migration
             $table->decimal('amount', 16, 2);
             $table->string('currency', 3);
             $table->decimal('conversion_rate', 16, 8)->nullable();
+
+            // The PSP leg, when the provider cannot be sent the account's
+            // currency. Null on every same-currency charge, which is almost
+            // all of them.
+            $table->char('charge_currency', 3)->nullable();
+            // decimal(20,4), not (16,2): KWD, BHD, OMR and JOD carry three
+            // minor units and a two-decimal column silently truncates them.
+            $table->decimal('charge_amount', 20, 4)->nullable();
             $table->decimal('fees', 16, 2)->default(0);
             $table->decimal('vendor_fees', 16, 2)->default(0);
             $table->decimal('fixed_vendor_fees', 16, 2)->default(0);
