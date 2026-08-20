@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace Asciisd\CashierCore;
 
 use Asciisd\CashierCore\Connections\ConnectionRegistry;
+use Asciisd\CashierCore\Contracts\ConvertsChargeCurrency;
 use Asciisd\CashierCore\Contracts\FundsLedger;
 use Asciisd\CashierCore\Contracts\ResolvesFundingAccount;
 use Asciisd\CashierCore\Registry\PaymentProviderRegistry;
 use Asciisd\CashierCore\Support\NullLedger;
 use Asciisd\CashierCore\Support\PassthroughFundingAccountResolver;
+use Asciisd\CashierCore\Support\RefusingCurrencyConverter;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -52,6 +54,7 @@ class CashierCoreServiceProvider extends ServiceProvider
 
         $this->registerConnectionRegistry();
         $this->registerLedger();
+        $this->registerCurrencyConverter();
         $this->registerFundingAccountResolver();
     }
 
@@ -75,6 +78,21 @@ class CashierCoreServiceProvider extends ServiceProvider
     {
         if (! $this->app->bound(FundsLedger::class)) {
             $this->app->singleton(FundsLedger::class, NullLedger::class);
+        }
+    }
+
+    /**
+     * Prices a charge leg for a PSP that cannot be sent the account's currency.
+     *
+     * The default refuses. A host with no foreign-currency connection never
+     * reaches it, and one that adds a foreign driver without binding a
+     * converter gets a loud failure rather than an invoice in the wrong
+     * currency at face value.
+     */
+    protected function registerCurrencyConverter(): void
+    {
+        if (! $this->app->bound(ConvertsChargeCurrency::class)) {
+            $this->app->singleton(ConvertsChargeCurrency::class, RefusingCurrencyConverter::class);
         }
     }
 
