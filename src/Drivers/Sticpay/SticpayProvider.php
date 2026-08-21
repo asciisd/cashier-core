@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Asciisd\CashierCore\Drivers\Sticpay;
 
+use Asciisd\CashierCore\Contracts\CustomerContract;
 use Asciisd\CashierCore\Contracts\PaymentProcessorInterface;
+use Asciisd\CashierCore\Contracts\PreparesChargeData;
 use Asciisd\CashierCore\Contracts\ProvidesWebhookTransactionId;
 use Asciisd\CashierCore\DataObjects\PaymentResult;
 use Asciisd\CashierCore\DataObjects\RefundResult;
@@ -40,7 +42,7 @@ use Illuminate\Support\Str;
  *    callback must never credit real funds, so every callback is checked
  *    against the connection's own setting.
  */
-class SticpayProvider implements PaymentProcessorInterface, ProvidesWebhookTransactionId
+class SticpayProvider implements PaymentProcessorInterface, PreparesChargeData, ProvidesWebhookTransactionId
 {
     public const LIVE = 'live';
 
@@ -84,26 +86,56 @@ class SticpayProvider implements PaymentProcessorInterface, ProvidesWebhookTrans
         $this->adapter = new SticpayAdapter;
     }
 
+    /**
+     * Declare the connection's currency BEFORE the charge, so the engine can
+     * price the leg.
+     *
+     * The connection's currency wins over the one PaymentService sets, which is
+     * always the app default. Sticpay accepts a currency the merchant holds no
+     * wallet for and then silently settles into the default wallet currency —
+     * so an account that is not provisioned for USD needs its currency pinned
+     * on the connection.
+     *
+     * Choosing it here rather than inside `charge()` is what makes it visible
+     * to `PaymentService`, which converts the amount when the declared currency
+     * differs from the account's. Resolving it privately inside `charge()` — as
+     * this driver used to — left the engine sending an account-currency figure
+     * that Sticpay then labelled with the foreign currency.
+     *
+     * When the connection configures no currency (production today), this
+     * resolves to `cashier-core.currency.default` and the engine converts
+     * nothing.
+     *
+     * @param  array<string, mixed>  $paymentData
+     * @return array<string, mixed>
+     */
+    public function prepareChargeData(CustomerContract $customer, string $connection, array $paymentData): array
+    {
+        $paymentData['currency'] = $this->currency($paymentData);
+
+        return $paymentData;
+    }
+
     public function charge(array $data): PaymentResult
     {
         $validated = $this->validatePaymentData($data);
 
         $orderNo = (string) ($data['order_id'] ?? $data['order_number'] ?? 'DEP-'.Str::ulid());
 
-        /*
-         * The connection's currency wins over the one PaymentService sets,
-         * which is always the app default. Sticpay accepts a currency the
-         * merchant holds no wallet for and then silently settles into the
-         * default wallet currency — so an account that is not provisioned for
-         * USD needs its currency pinned here.
-         */
-        $currency = (string) (($this->config['currency'] ?? null)
-            ?: ($data['currency'] ?? config('cashier-core.currency.default', 'USD')));
+        // Already resolved in prepareChargeData() on the engine path; recomputed
+        // identically here so a direct charge() call still works.
+        $currency = $this->currency($data);
 
         /*
          * Fixed-2 string, matching the vendor's "125.03". The signature is
          * computed over the literal value, so a float that renders as "125.0"
          * on the wire but "125.03" in the digest fails with error 809.
+         *
+         * `order_amount` is major units denominated in `order_currency`; on the
+         * engine path it is the converted charge leg. Two decimals is Sticpay's
+         * own format, so a connection pinned to a three-minor-unit currency
+         * (KWD, BHD) would round the third digit away — do not pin one without
+         * confirming Sticpay accepts it.
          */
         $signed = [
             'merchant_email' => (string) $this->config['merchant_email'],
@@ -465,6 +497,21 @@ class SticpayProvider implements PaymentProcessorInterface, ProvidesWebhookTrans
         }
 
         return Route::has($fallbackRoute) ? route($fallbackRoute) : null;
+    }
+
+    /**
+     * The currency this connection charges in.
+     *
+     * Upper-cased so the value the engine compares against the account currency
+     * is the value Sticpay is sent — a lower-case env entry would otherwise
+     * read as "foreign" to the engine and as an unknown currency to Sticpay.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    private function currency(array $data): string
+    {
+        return strtoupper((string) (($this->config['currency'] ?? null)
+            ?: ($data['currency'] ?? config('cashier-core.currency.default', 'USD'))));
     }
 
     private function signType(): string
