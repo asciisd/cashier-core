@@ -401,6 +401,25 @@ class WebhookProcessor
         Transaction $transaction,
         TransactionWebhookUpdate $update,
     ): array {
+        /*
+         * Client-controlled settlement reconciliation and a converted charge
+         * leg are mutually exclusive, and must never compose.
+         *
+         * Reconciliation compares the settlement metadata against `amount` and
+         * then OVERWRITES `amount` with the result — but on a foreign charge
+         * `amount` is the account currency (USD) while any settlement figure a
+         * driver reported would be in the charge currency. Composing them
+         * compares two different units and writes the PSP-leg figure into the
+         * column the ledger credits: the original incident, by another route.
+         *
+         * No foreign driver emits these keys today, so this is a latch rather
+         * than a fix. A rail that genuinely needs both has to reconcile against
+         * `charge_amount` and convert back, which is a design of its own.
+         */
+        if ($transaction->charge_currency !== null) {
+            return [];
+        }
+
         $expected = $update->metadata['settlement_expected_payment'] ?? null;
         $paid = $update->metadata['settlement_actually_paid'] ?? null;
 

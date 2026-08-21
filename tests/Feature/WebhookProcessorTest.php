@@ -315,3 +315,35 @@ it('releases the claim when the ledger refuses, keeps it when the ledger throws'
     // expires and a human can check ledger history.
     expect($errored->fresh()->metadata)->toHaveKey(TransferClaim::METADATA_KEY);
 });
+
+/*
+ * Settlement reconciliation compares the settlement metadata against `amount`
+ * and then OVERWRITES `amount` with the result. On a foreign charge `amount` is
+ * the account currency while any settlement figure is in the charge currency,
+ * so composing the two writes a PSP-leg figure into the column the ledger
+ * credits — the original incident by another route. No foreign driver emits
+ * these keys today; this is the latch that keeps it that way.
+ */
+it('never reconciles settlement against a converted charge leg', function () {
+    $transaction = processorDeposit([
+        'amount' => 100,
+        'requested_amount' => 100,
+        'charge_currency' => 'KWD',
+        'charge_amount' => 30.6700,
+        'conversion_rate' => 0.30670000,
+    ]);
+
+    app(WebhookProcessor::class)->applyUpdate('aps', $transaction, succeededWebhook([
+        'metadata' => [
+            'settlement_expected_payment' => '100',
+            'settlement_actually_paid' => '40',
+        ],
+    ]));
+
+    $fresh = $transaction->fresh();
+
+    expect((float) $fresh->amount)->toBe(100.0)
+        ->and($fresh->settled_amount)->toBeNull();
+
+    $this->ledger->assertMoved('credit', fn (array $m) => $m['amount'] === 100.0);
+});
