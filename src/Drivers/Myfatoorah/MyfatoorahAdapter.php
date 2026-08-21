@@ -144,9 +144,11 @@ class MyfatoorahAdapter implements PaymentAdapterInterface
                 ? $this->errorMessage($transaction)
                 : null,
             // The DISPLAY-currency figure. This is what we asked MyFatoorah to
-            // collect and therefore the same basis as
-            // `transactions.requested_amount`, which WebhookProcessor compares
-            // it against. `ValueInBaseCurrency` is the amount converted to the
+            // collect, and therefore the same basis as the charge leg:
+            // WebhookProcessor compares it against `transactions.charge_amount`
+            // whenever one was recorded, and only falls back to
+            // `requested_amount` for a transaction charged in the account's own
+            // currency. `ValueInBaseCurrency` is the amount converted to the
             // account's base currency; reporting it would put every deposit
             // outside the tolerance band and hold it for review — the same
             // class of bug the APS adapter documents for `amount_in`.

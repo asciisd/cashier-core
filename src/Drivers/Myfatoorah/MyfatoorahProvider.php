@@ -134,9 +134,12 @@ class MyfatoorahProvider implements PaymentProcessorInterface, PreparesChargeDat
             // enabled on the account.
             'PaymentMethod' => $this->setting('payment_method'),
             'Order' => [
-                // The exact figure we were handed. transactions.amount is
-                // decimal(16,2) so this is already two-decimal; no scaling,
-                // no minor units.
+                // The exact figure we were handed: major units in
+                // Order.Currency, no scaling and no minor units. It is the
+                // converted charge leg, which PaymentService stores in
+                // transactions.charge_amount — decimal(20,4), so a
+                // three-minor-unit currency such as KWD keeps its third digit
+                // here and in the webhook assertion that reads it back.
                 'Amount' => (float) $validated['amount'],
                 'Currency' => $this->currency(),
                 'ExternalIdentifier' => $externalId,
