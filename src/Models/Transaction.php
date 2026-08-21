@@ -35,7 +35,8 @@ class Transaction extends Model
     protected $fillable = [
         'user_id', 'trading_account_id', 'transfer_transaction_id',
         'provider', 'connection', 'provider_transaction_id', 'payment_processor', 'type', 'is_ftd', 'status',
-        'amount', 'currency', 'conversion_rate', 'fees', 'vendor_fees', 'fixed_vendor_fees',
+        'amount', 'currency', 'conversion_rate', 'charge_currency', 'charge_amount',
+        'fees', 'vendor_fees', 'fixed_vendor_fees',
         'charged_amount', 'requested_amount', 'settled_amount',
         'psp_fee_amount', 'markup_amount', 'settlement_mode',
         'description', 'metadata', 'provider_payload',
@@ -79,6 +80,7 @@ class Transaction extends Model
             'is_ftd' => 'boolean',
             'amount' => 'decimal:2',
             'conversion_rate' => 'decimal:8',
+            'charge_amount' => 'decimal:4',
             'fees' => 'decimal:2',
             'vendor_fees' => 'decimal:2',
             'fixed_vendor_fees' => 'decimal:2',

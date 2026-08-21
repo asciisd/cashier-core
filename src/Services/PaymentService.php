@@ -7,6 +7,7 @@ namespace Asciisd\CashierCore\Services;
 use Asciisd\CashierCore\Cashier;
 use Asciisd\CashierCore\Connections\ConnectionRegistry;
 use Asciisd\CashierCore\Connections\Connections;
+use Asciisd\CashierCore\Contracts\ConvertsChargeCurrency;
 use Asciisd\CashierCore\Contracts\CustomerContract;
 use Asciisd\CashierCore\Contracts\FeeConfigurationContract;
 use Asciisd\CashierCore\Contracts\PaymentProcessorInterface;
@@ -31,6 +32,7 @@ use Asciisd\CashierCore\Models\Refund;
 use Asciisd\CashierCore\Models\Transaction;
 use Asciisd\CashierCore\Services\Webhooks\WebhookProcessor;
 use Asciisd\CashierCore\Support\PayloadSanitizer;
+use Asciisd\CashierCore\Support\RefusingCurrencyConverter;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -50,6 +52,7 @@ class PaymentService
         private readonly ResolvesFundingAccount $fundingAccounts,
         private readonly FeeCalculator $fees = new FeeCalculator,
         private readonly PayloadSanitizer $sanitizer = new PayloadSanitizer,
+        private readonly ConvertsChargeCurrency $currencyConverter = new RefusingCurrencyConverter,
     ) {}
 
     /**
@@ -106,8 +109,11 @@ class PaymentService
 
             // Always the default currency: callers cannot pick one. A driver
             // that charges in a fixed currency overrides this in its
-            // prepareChargeData() hook.
-            $paymentData['currency'] = config('cashier-core.currency.default', 'USD');
+            // prepareChargeData() hook, and the conversion below reconciles
+            // the two.
+            $accountCurrency = strtoupper((string) config('cashier-core.currency.default', 'USD'));
+            $paymentData['currency'] = $accountCurrency;
+            $paymentData['account_currency'] = $accountCurrency;
 
             // Resolve the fees before charging, and hand the PSP the amount
             // that makes the customer's deposit survive them. Every driver
@@ -125,6 +131,33 @@ class PaymentService
             // provider-specific branch that used to live here.
             if ($paymentProvider instanceof PreparesChargeData) {
                 $paymentData = $paymentProvider->prepareChargeData($customer, $connection, $paymentData);
+            }
+
+            // A driver that cannot be sent the account's currency declared its
+            // own above. Convert here, not earlier: fees are resolved against
+            // the account currency and its configuration, and must stay that
+            // way — the customer's deposit and every limit it is checked
+            // against are denominated in the account currency, not the PSP's.
+            // What the customer deposited, in the account currency, before any
+            // conversion. `$result->amount` echoes the PSP's figure, which on a
+            // foreign charge is denominated in the charge currency — it must
+            // never become `amount`, and with no fee configuration to fall back
+            // on it otherwise would.
+            $paymentData['account_amount'] = (float) ($paymentData['amount'] ?? 0);
+
+            $chargeCurrency = strtoupper((string) ($paymentData['currency'] ?? $accountCurrency));
+
+            if ($chargeCurrency !== $accountCurrency) {
+                $conversion = $this->currencyConverter->convert(
+                    (float) ($paymentData['amount'] ?? 0),
+                    $accountCurrency,
+                    $chargeCurrency,
+                );
+
+                $paymentData['amount'] = $conversion->amount;
+                $paymentData['charge_currency'] = $conversion->currency;
+                $paymentData['charge_amount'] = $conversion->amount;
+                $paymentData['conversion_rate'] = $conversion->rate;
             }
 
             $result = $paymentProvider->charge($paymentData);
@@ -259,6 +292,27 @@ class PaymentService
                 ->whereKey($transaction->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
+
+            /*
+             * A foreign charge leg has no refund path yet, and the failure mode
+             * is expensive rather than merely wrong: the balance below is
+             * computed from `amount` (the account currency, USD 100) and the
+             * provider is then handed that magnitude to refund in the currency
+             * it charged in (KWD 100 — roughly 3.26x what the customer paid).
+             *
+             * Refusing here rather than in a driver keeps the guard on every
+             * path: the drivers that can charge foreign today either throw on
+             * refund() or refund in full, so nothing enforces it downstream.
+             * Deliberately scoped out of this change; a real implementation has
+             * to decide which leg is being reversed and at whose rate.
+             */
+            if ($locked->charge_currency !== null) {
+                throw new PaymentProcessingException(
+                    "Transaction [{$locked->getKey()}] was charged in {$locked->charge_currency}; "
+                    .'refunds of a foreign-currency charge are not supported yet and must be issued '
+                    ."through the provider's own console."
+                );
+            }
 
             $charged = round((float) $locked->amount, 2);
 
@@ -499,9 +553,15 @@ class PaymentService
             // The customer's deposit, NOT `$result->amount` — that echoes the
             // grossed-up figure we sent the PSP. `amount` is what reaches the
             // ledger, and the credit path reads it directly.
-            'amount' => $breakdown?->amount ?? $result->amount,
-            'currency' => $result->currency,
+            'amount' => $breakdown?->amount ?? $paymentData['account_amount'] ?? $result->amount,
+            // The account currency, NOT $result->currency: on a foreign charge
+            // the driver reports the currency it invoiced, and storing that
+            // would put every downstream sum — deposit limits, reporting, the
+            // ledger credit — into a currency the account is not held in.
+            'currency' => $paymentData['account_currency'] ?? $result->currency,
             'conversion_rate' => $paymentData['conversion_rate'] ?? null,
+            'charge_currency' => $paymentData['charge_currency'] ?? null,
+            'charge_amount' => $paymentData['charge_amount'] ?? null,
             'vendor_fees' => $paymentData['vendor_fees'] ?? 0,
             'fixed_vendor_fees' => $paymentData['fixed_vendor_fees'] ?? 0,
             'status' => $result->status,

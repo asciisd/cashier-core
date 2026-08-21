@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Asciisd\CashierCore\Drivers\Payport;
 
+use Asciisd\CashierCore\Contracts\CustomerContract;
 use Asciisd\CashierCore\Contracts\PaymentProcessorInterface;
+use Asciisd\CashierCore\Contracts\PreparesChargeData;
 use Asciisd\CashierCore\Contracts\ProvidesWebhookTransactionId;
 use Asciisd\CashierCore\DataObjects\PaymentResult;
 use Asciisd\CashierCore\DataObjects\RefundResult;
@@ -29,7 +31,7 @@ use Illuminate\Support\Str;
  * payment ourselves. It does not fit the hosted-redirect model the rest of this
  * app is built on, so only the API5 key is used.
  */
-class PayportProvider implements PaymentProcessorInterface, ProvidesWebhookTransactionId
+class PayportProvider implements PaymentProcessorInterface, PreparesChargeData, ProvidesWebhookTransactionId
 {
     /**
      * Payment-form localisations Payport offers. Anything else falls back to
@@ -72,6 +74,36 @@ class PayportProvider implements PaymentProcessorInterface, ProvidesWebhookTrans
         $this->adapter = new PayportAdapter;
     }
 
+    /**
+     * Declare the connection's currency BEFORE the charge, so the engine can
+     * price the leg.
+     *
+     * The connection's currency wins over the one PaymentService sets, which is
+     * always the app default. A Payport merchant account is provisioned for
+     * either fiat or non-fiat invoices: sending a currency the account has no
+     * offers for still creates the invoice, and the customer then lands on a
+     * payment page with nothing to pick. {@see currency2currency in charge()}
+     *
+     * Choosing it here rather than inside `charge()` is what makes it visible
+     * to `PaymentService`, which converts the amount when the declared currency
+     * differs from the account's. Resolving it privately inside `charge()` —
+     * as this driver used to — left the engine sending a USD figure that
+     * Payport then labelled EGP: the exact defect this seam exists to prevent.
+     *
+     * When the connection configures no currency (production today), this
+     * resolves to `cashier-core.currency.default` and the engine converts
+     * nothing.
+     *
+     * @param  array<string, mixed>  $paymentData
+     * @return array<string, mixed>
+     */
+    public function prepareChargeData(CustomerContract $customer, string $connection, array $paymentData): array
+    {
+        $paymentData['currency'] = $this->currency($paymentData);
+
+        return $paymentData;
+    }
+
     public function charge(array $data): PaymentResult
     {
         $validated = $this->validatePaymentData($data);
@@ -79,19 +111,15 @@ class PayportProvider implements PaymentProcessorInterface, ProvidesWebhookTrans
         $orderId = (string) ($data['order_id'] ?? $data['order_number'] ?? 'DEP-'.Str::ulid());
         $description = (string) ($data['description'] ?? "Deposit {$orderId}");
 
-        /*
-         * The connection's currency wins over the one PaymentService sets, which
-         * is always the app default. A Payport merchant account is provisioned
-         * for either fiat or non-fiat invoices: sending a currency the account
-         * has no offers for still creates the invoice, and the customer then
-         * lands on a payment page with nothing to pick.
-         * {@see currency2currency below}
-         */
-        $currency = (string) (($this->config['currency'] ?? null)
-            ?: ($data['currency'] ?? config('cashier-core.currency.default', 'USD')));
+        // Already resolved in prepareChargeData() on the engine path; recomputed
+        // identically here so a direct charge() call still works.
+        $currency = $this->currency($data);
 
         $body = array_filter([
             'order_id' => $orderId,
+            // Major units, denominated in `currency` — Payport takes an API5
+            // fiat invoice exactly as sent. On the engine path this is the
+            // converted charge leg, not the account amount.
             'amount' => (float) $validated['amount'],
             'currency' => $currency,
             'customer_id' => $this->customerId($data),
@@ -295,6 +323,21 @@ class PayportProvider implements PaymentProcessorInterface, ProvidesWebhookTrans
         }
 
         return Route::has($fallbackRoute) ? route($fallbackRoute) : null;
+    }
+
+    /**
+     * The currency this connection invoices in.
+     *
+     * Upper-cased so the value the engine compares against the account currency
+     * is the value Payport is sent — a lower-case env entry would otherwise
+     * read as "foreign" to the engine and as an unknown currency to Payport.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    private function currency(array $data): string
+    {
+        return strtoupper((string) (($this->config['currency'] ?? null)
+            ?: ($data['currency'] ?? config('cashier-core.currency.default', 'USD'))));
     }
 
     private function locale(): string
