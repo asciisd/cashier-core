@@ -293,6 +293,27 @@ class PaymentService
                 ->lockForUpdate()
                 ->firstOrFail();
 
+            /*
+             * A foreign charge leg has no refund path yet, and the failure mode
+             * is expensive rather than merely wrong: the balance below is
+             * computed from `amount` (the account currency, USD 100) and the
+             * provider is then handed that magnitude to refund in the currency
+             * it charged in (KWD 100 — roughly 3.26x what the customer paid).
+             *
+             * Refusing here rather than in a driver keeps the guard on every
+             * path: the drivers that can charge foreign today either throw on
+             * refund() or refund in full, so nothing enforces it downstream.
+             * Deliberately scoped out of this change; a real implementation has
+             * to decide which leg is being reversed and at whose rate.
+             */
+            if ($locked->charge_currency !== null) {
+                throw new PaymentProcessingException(
+                    "Transaction [{$locked->getKey()}] was charged in {$locked->charge_currency}; "
+                    .'refunds of a foreign-currency charge are not supported yet and must be issued '
+                    ."through the provider's own console."
+                );
+            }
+
             $charged = round((float) $locked->amount, 2);
 
             $claimed = round((float) $refundModel::query()

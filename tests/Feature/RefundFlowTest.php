@@ -287,3 +287,28 @@ it('finds the transaction by id as well as provider id, without escaping scopes'
 
     expect((float) Refund::query()->where('transaction_id', $transaction->id)->sum('amount'))->toBe(10.0);
 });
+
+/*
+ * A foreign charge leg has no refund path. The balance is computed from
+ * `amount` (the account currency) and the provider is handed that magnitude to
+ * refund in the currency it charged in — on a KWD invoice that is roughly
+ * 3.26x what the customer actually paid. Refusing is the fail-closed answer
+ * until refunds of a converted leg are designed properly.
+ */
+it('refuses to refund a transaction charged in a foreign currency', function () {
+    $transaction = refundableTransaction(100.0);
+
+    $transaction->forceFill([
+        'charge_currency' => 'KWD',
+        'charge_amount' => 30.6700,
+        'conversion_rate' => 0.30670000,
+    ])->save();
+
+    expect(fn () => app(PaymentService::class)->processRefund($transaction->provider_transaction_id, 100.0))
+        ->toThrow(PaymentProcessingException::class, 'refunds of a foreign-currency charge are not supported yet');
+
+    // Refused before anything was reserved or sent: no row to release, and the
+    // provider never saw the USD magnitude.
+    expect(Refund::query()->where('transaction_id', $transaction->id)->count())->toBe(0)
+        ->and(RefundingProvider::$lastAmount)->toBeNull();
+});
