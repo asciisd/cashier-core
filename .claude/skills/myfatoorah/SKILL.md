@@ -11,9 +11,18 @@ documentation site — 219 pages, including the OpenAPI fragment behind every
 endpoint — so the contract is available offline and upstream changes show up as
 diffs.
 
-**No MyFatoorah driver exists in this package yet.** `references/pitfalls.md`
-is written against the docs and against MyFatoorah's own PHP library, not
-against our code; each entry says whether it is Verified or Unverified.
+**The driver is built.** It shipped in 2.2.0 and lives in
+`src/Drivers/Myfatoorah/`: `MyfatoorahClient` (the V3 HTTP surface and the
+envelope guard), `MyfatoorahAdapter` (payload assembly and status mapping),
+`MyfatoorahProvider` (the engine-facing driver), and
+`MyfatoorahSignatureService` (webhook signatures). It covers deposits,
+webhooks and status sync; refunds, tokenization, recurring and auth-and-capture
+are documented below but not implemented.
+
+`references/pitfalls.md` is written against the docs and against MyFatoorah's
+own PHP library, not against our code; each entry says whether it is Verified
+or Unverified. Where the driver already encodes a pitfall, its own comments
+cite the entry number.
 
 ## References
 
@@ -40,7 +49,7 @@ Mirrored for completeness of the diff, not because this package calls them:
 `suppliers.md`, `api-suppliers.md`, `shipping.md`, `api-shipping.md`,
 `toolkit.md`, `mobile-sdk.md`, `plugins.md`.
 
-## Before you write the driver
+## Before you touch the driver
 
 Five things that will otherwise cost time:
 
