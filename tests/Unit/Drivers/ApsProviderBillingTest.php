@@ -5,7 +5,9 @@ declare(strict_types=1);
 use Asciisd\CashierCore\Contracts\CustomerContract;
 use Asciisd\CashierCore\Contracts\ProvidesBillingDetails;
 use Asciisd\CashierCore\Drivers\Aps\ApsProvider;
+use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 function apsBillingConfig(array $overrides = []): array
 {
@@ -150,4 +152,30 @@ it('falls back to the customer contract email when billing details omit it', fun
     $deposit = apsDepositBlockFor(apsBillingCustomer(['email' => null]));
 
     expect($deposit)->toHaveKey('from_email', 'customer@example.com');
+});
+
+it('logs the whole rejection body, not the truncated exception message', function () {
+    $body = json_encode(['error' => 'transaction_info_needed', 'fields' => [
+        'billing_post_code' => ['description' => 'Invalid format'],
+        'billing_street' => ['description' => 'Invalid format'],
+        'billing_town' => ['description' => 'Invalid format'],
+        'from_country' => ['description' => 'Invalid format'],
+        'from_email' => ['description' => 'Invalid format'],
+    ]]);
+
+    Http::fake(['*' => Http::response($body, 400)]);
+
+    $logged = null;
+    Log::listen(function ($message) use (&$logged) {
+        $logged = $message->context['error'] ?? $logged;
+    });
+
+    $provider = new ApsProvider(apsBillingConfig());
+
+    expect(fn () => $provider->charge(['amount' => 25.0]))
+        ->toThrow(PaymentProcessingException::class);
+
+    expect($logged)
+        ->toContain('from_email')
+        ->toContain('billing_town');
 });

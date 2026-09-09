@@ -158,7 +158,14 @@ class ApsProvider implements PaymentProcessorInterface, PreparesChargeData, Prov
             // and would otherwise escape as an uncaught 500 with nothing logged.
             $status = $e instanceof RequestException ? $e->response?->status() : null;
 
-            PaymentLogger::providerChargeRequestFailed('aps', $status, $e->getMessage());
+            // NOT $e->getMessage(): Laravel truncates it at 120 characters, which
+            // is one field name out of the five a `transaction_info_needed` refusal
+            // lists. The full body is what makes that failure diagnosable.
+            $message = $e instanceof RequestException
+                ? Str::limit((string) $e->response?->body(), 1000)
+                : $e->getMessage();
+
+            PaymentLogger::providerChargeRequestFailed('aps', $status, $message);
             throw new PaymentProcessingException('APS deposit could not be created.');
         }
 
