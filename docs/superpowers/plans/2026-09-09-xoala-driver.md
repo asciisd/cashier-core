@@ -2400,8 +2400,12 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
 
 beforeEach(function () {
-    Cashier::fakeConnection('xoala', 'xoala', ['secure_key' => 'base-key']);
-    Cashier::fakeConnection('xoala_second', 'xoala', ['secure_key' => 'second-key']);
+    // Two args, not three: fakeConnection(string $name, array $overrides = []).
+    // `xoala_second` resolves to the `xoala` driver by the underscore-prefix
+    // rule in Cashier::fakeConnection(), and the override lands after the
+    // driver defaults — so the two accounts get genuinely distinct keys.
+    Cashier::fakeConnection('xoala', ['secure_key' => 'base-key']);
+    Cashier::fakeConnection('xoala_second', ['secure_key' => 'second-key']);
 
     config()->set('cashier-core.webhooks.verify_signature', true);
 
