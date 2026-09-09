@@ -90,11 +90,20 @@ function apsBillingCustomer(array $details = []): CustomerContract
     };
 }
 
-function apsDepositBlockFor(CustomerContract $customer): array
+/**
+ * Charge through a connection that HAS opted in, unless told otherwise.
+ *
+ * Pass `[]` for a connection that never asked for the billing block — that is
+ * every APS account but Apple Pay, and the shape their payload must keep.
+ *
+ * @param  array<string, mixed>  $configOverrides
+ * @return array<string, mixed>
+ */
+function apsDepositBlockFor(CustomerContract $customer, array $configOverrides = ['send_billing_details' => true]): array
 {
     Http::fake(['*' => Http::response(['id' => 'tx-1', 'how' => 'https://pay.test/1'], 200)]);
 
-    $provider = new ApsProvider(apsBillingConfig());
+    $provider = new ApsProvider(apsBillingConfig($configOverrides));
     $data = $provider->prepareChargeData($customer, 'aps_apple_pay', ['amount' => 25.0]);
     $provider->charge($data);
 
@@ -133,6 +142,34 @@ it('omits every billing key for a customer without the contract', function () {
 
     expect(array_keys($deposit))
         ->not->toContain('from_email', 'from_country', 'billing_street', 'billing_town', 'billing_post_code');
+});
+
+it('sends no billing key on a connection that has not opted in', function () {
+    // The card and Binance Pay accounts carry all of today's volume and their
+    // deposit methods require nothing. A host customer implementing the contract
+    // must not change their payload by a single key.
+    $deposit = apsDepositBlockFor(apsBillingCustomer(), []);
+
+    // The two URL keys are absent because no `payment.success` / `webhooks.aps`
+    // route is registered in the package suite and this connection configures
+    // neither — array_filter drops them, exactly as it does today.
+    expect(array_keys($deposit))->toBe(['external_id', 'customer_ip_address']);
+});
+
+it('sends no billing key when the connection opts out explicitly', function () {
+    $deposit = apsDepositBlockFor(apsBillingCustomer(), ['send_billing_details' => false]);
+
+    expect(array_keys($deposit))
+        ->not->toContain('from_email', 'from_country', 'billing_street', 'billing_town', 'billing_post_code', 'from_mobile', 'billing_state');
+});
+
+it('leaves the charge payload untouched when the connection has not opted in', function () {
+    // prepareChargeData() is the whole opt-in seam: nothing downstream of it
+    // knows about billing, so an unchanged return is an unchanged payload.
+    $provider = new ApsProvider(apsBillingConfig());
+
+    expect($provider->prepareChargeData(apsBillingCustomer(), 'aps', ['amount' => 25.0]))
+        ->toBe(['amount' => 25.0]);
 });
 
 it('drops null and empty values rather than sending them blank', function () {

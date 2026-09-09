@@ -168,11 +168,12 @@ reason. Both would need honouring at that point.
 The redirect path we do take, for contrast — not a site of any defect:
 `src/Drivers/Aps/ApsClient.php:34-40`, `src/Drivers/Aps/ApsProvider.php:102-104`
 
-## 12. A complete APS connection needs nine keys, and only four are enforced
+## 12. A complete APS connection needs ten keys, and only four are enforced
 
 Beyond `driver`, `base_url`, `merchant_guid`, `app_token` and `app_secret`, the
 driver also reads `callback_secret`, `deposit_method`, `redirect_url`,
-`webhook_url` and `checkout_host_map`. Four of these examples used to show only
+`webhook_url`, `checkout_host_map` and `send_billing_details` (§13). Four of
+these examples used to show only
 the first five, so a connection copied from one threw on `charge()` for the
 missing `deposit_method` and silently failed callback verification. All four now
 show the full set.
@@ -190,3 +191,52 @@ since the test suite exercises it.
 `config/cashier-core.php:32-53`, `src/Drivers/Aps/ApsProvider.php:44-46`
 (what is validated), `src/Drivers/Aps/ApsProvider.php:63-67` (what is not),
 `src/Cashier.php:134-143` (the complete key set)
+
+## 13. Required customer fields are per *deposit method*, so the billing block is opt-in
+
+`GET /api/v3/{merchantGuid}/info` lists each deposit method's fields with a
+`required` flag, and the answer differs per account. On ours:
+
+```
+aps          (Visa/Mastercard/Mada)  required: (none)
+aps_binance  (Binance Pay)           required: (none)
+aps_apple_pay                        required: from_email, from_country,
+                                               billing_street, billing_town,
+                                               billing_post_code
+```
+
+Apple Pay is the first method that requires anything, which is why the driver
+was correct-by-luck for years: `charge()` built a fixed four-key deposit block
+of purely optional fields and no host data could reach it at all. Sending
+nothing to an account that demands five fields earns a `400` with
+`error: transaction_info_needed` and a `fields` map naming each one.
+
+The fix is `prepareChargeData()`, but it is gated on a per-connection
+`send_billing_details` flag that **defaults to false**, and that default is the
+load-bearing part. The block is sourced from host profile columns that nothing
+validates against APS's documented shapes — `billing_street` is "2-100
+characters" at APS and an unbounded freeform column in a typical host, and
+`from_mobile` is a raw phone number. On a PSP that already refuses on field
+*format*, turning that on for the accounts carrying the live card volume, which
+asked for none of it, is a regression with no upside. An unset flag therefore
+produces the pre-existing payload byte for byte.
+
+The flag is deliberately not "is this connection named `aps_apple_pay`": which
+account needs the block is something only `/info` on that account can tell you,
+so it is stated in the host's connection config, not hardcoded in the driver.
+
+Two related consequences worth knowing:
+
+- Nothing is invented for a missing value — no placeholder country, no
+  `+1234567890` phone. APS's own guide requires the billing country to match the
+  card issuer's, so a fabricated value buys a downstream issuer decline in place
+  of an upfront, legible `transaction_info_needed`.
+- If APS ever adds a sixth required field to an account, the symptom is the same
+  `400`. It is diagnosable in one log line only because `charge()` logs
+  `$e->response?->body()` rather than `$e->getMessage()`, which Laravel truncates
+  at 120 characters — the 26 Aug staging log preserved `billing_post_code` and
+  swallowed the other four names.
+
+`src/Drivers/Aps/ApsProvider.php` (`prepareChargeData()`, `BILLING_FIELD_MAP`,
+and the `Str::limit(…, 1000)` in `charge()`'s catch arm),
+`tests/Unit/Drivers/ApsProviderBillingTest.php`

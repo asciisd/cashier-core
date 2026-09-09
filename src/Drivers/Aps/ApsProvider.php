@@ -80,6 +80,18 @@ class ApsProvider implements PaymentProcessorInterface, PreparesChargeData, Prov
     /**
      * Attach the customer's billing details, translated to APS field names.
      *
+     * Opt-in per connection, and off by default: APS declares required fields
+     * per deposit method, and most methods declare none. Sending the block to an
+     * account that did not ask for it means putting a raw phone number and an
+     * unbounded freeform street line — from host columns nothing validates for
+     * APS's documented 2-100 character shape — into a payload that works today,
+     * on a PSP already observed to refuse on field *format*. A connection that
+     * does not set the flag therefore charges byte-identically to before.
+     *
+     * Which connection needs it is host knowledge (`GET /api/v3/{merchantGuid}/info`
+     * on that account is the authority), so it is expressed in the host's own
+     * connection config rather than by name in here.
+     *
      * Nothing is invented: a value the host does not hold is simply absent, and
      * APS answers with `transaction_info_needed` naming what it wanted. That is
      * the intended loud failure — a fabricated billing country would instead be
@@ -87,6 +99,10 @@ class ApsProvider implements PaymentProcessorInterface, PreparesChargeData, Prov
      */
     public function prepareChargeData(CustomerContract $customer, string $connection, array $paymentData): array
     {
+        if (! ($this->config['send_billing_details'] ?? false)) {
+            return $paymentData;
+        }
+
         if (! $customer instanceof ProvidesBillingDetails) {
             return $paymentData;
         }
