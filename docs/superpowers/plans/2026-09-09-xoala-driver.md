@@ -2481,7 +2481,11 @@ it('matches the second account by its own key', function () {
 
     Queue::assertPushed(
         ProcessPaymentProviderWebhook::class,
-        fn ($job) => $job->connection === 'xoala_second',
+        // `connectionName`, NOT `connection`: the job renames it deliberately
+        // because Laravel's Queueable trait already owns a `$connection`
+        // property holding the QUEUE connection. Asserting on `connection`
+        // reads that instead and never sees the PSP account.
+        fn ($job) => $job->connectionName === 'xoala_second',
     );
 });
 
@@ -2509,7 +2513,14 @@ it('builds a verifiable delivery through the simulator', function () {
 });
 ```
 
-Check `ProcessPaymentProviderWebhook`'s constructor property name before running — if the connection is not a public `$connection` property, adjust the closure in the "second account" test to match.
+The job's relevant public API, confirmed against
+`src/Jobs/ProcessPaymentProviderWebhook.php`:
+
+```php
+public readonly string $driver;
+public readonly array $payload;
+public readonly ?string $connectionName;   // NOT $connection
+```
 
 - [ ] **Step 2: Run test to verify it fails**
 
