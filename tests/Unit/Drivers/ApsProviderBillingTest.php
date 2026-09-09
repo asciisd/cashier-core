@@ -6,6 +6,7 @@ use Asciisd\CashierCore\Contracts\CustomerContract;
 use Asciisd\CashierCore\Contracts\ProvidesBillingDetails;
 use Asciisd\CashierCore\Drivers\Aps\ApsProvider;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -178,4 +179,27 @@ it('logs the whole rejection body, not the truncated exception message', functio
     expect($logged)
         ->toContain('from_email')
         ->toContain('billing_town');
+});
+
+it('logs the raw exception message with a null status on a transport failure', function () {
+    // A connection timeout is a ConnectionException — a sibling of
+    // RequestException, not a subclass — so it carries no HTTP response to
+    // read a body from, and must fall back to $e->getMessage() while still
+    // surfacing as a PaymentProcessingException rather than an uncaught 500.
+    Http::fake(fn () => throw new ConnectionException('cURL error 28: timed out'));
+
+    $context = null;
+    Log::listen(function ($message) use (&$context) {
+        $context = array_key_exists('error', $message->context) ? $message->context : $context;
+    });
+
+    $provider = new ApsProvider(apsBillingConfig());
+
+    expect(fn () => $provider->charge(['amount' => 25.0]))
+        ->toThrow(PaymentProcessingException::class);
+
+    expect($context)
+        ->not->toBeNull()
+        ->and($context['error'])->toBe('cURL error 28: timed out')
+        ->and($context['http_status'])->toBeNull();
 });
