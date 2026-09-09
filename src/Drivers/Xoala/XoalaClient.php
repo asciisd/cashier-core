@@ -62,7 +62,7 @@ final class XoalaClient
         }
 
         try {
-            $response = PspHttp::client()
+            $response = PspHttp::idempotent()
                 ->withHeaders(['authtoken' => $token])
                 ->acceptJson()
                 ->asForm()
@@ -144,7 +144,7 @@ final class XoalaClient
         }
 
         try {
-            $response = PspHttp::client()
+            $response = PspHttp::idempotent()
                 ->acceptJson()
                 ->asForm()
                 ->post($this->baseUrl.'/transactionServices/REST/v1/authToken', array_filter([

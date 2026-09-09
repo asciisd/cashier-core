@@ -74,7 +74,11 @@ it('caches the token across calls', function () {
     $client->inquiry('DEP-2', 'c2');
 
     // One token fetch, two inquiries.
-    Http::assertSentCount(3);
+    $tokenCalls = collect(Http::recorded())
+        ->filter(fn ($pair) => str_ends_with($pair[0]->url(), '/authToken'))
+        ->count();
+
+    expect($tokenCalls)->toBe(1);
 });
 
 it('caches the token per connection, not globally', function () {
@@ -87,7 +91,11 @@ it('caches the token per connection, not globally', function () {
     (new XoalaClient('https://xoala.test', '2', 'k2', 'xoala_second'))->inquiry('DEP-2', 'c');
 
     // Two token fetches, two inquiries — a shared cache key would send three.
-    Http::assertSentCount(4);
+    $tokenCalls = collect(Http::recorded())
+        ->filter(fn ($pair) => str_ends_with($pair[0]->url(), '/authToken'))
+        ->count();
+
+    expect($tokenCalls)->toBe(2);
 });
 
 it('returns null when the token cannot be obtained', function () {
@@ -140,7 +148,11 @@ it('drops the cached token when Xoala rejects it, so the next call re-authentica
 
     // Two token fetches, not one: a token cached for 55 minutes after Xoala
     // stopped honouring it would fail every sync in that window.
-    Http::assertSentCount(4);
+    $tokenCalls = collect(Http::recorded())
+        ->filter(fn ($pair) => str_ends_with($pair[0]->url(), '/authToken'))
+        ->count();
+
+    expect($tokenCalls)->toBe(2);
 });
 
 it('drops a cached token on request so the next call re-authenticates', function () {
@@ -155,5 +167,9 @@ it('drops a cached token on request so the next call re-authenticates', function
     $client->inquiry('DEP-2', 'c');
 
     // Two token fetches because the cache was cleared between inquiries.
-    Http::assertSentCount(4);
+    $tokenCalls = collect(Http::recorded())
+        ->filter(fn ($pair) => str_ends_with($pair[0]->url(), '/authToken'))
+        ->count();
+
+    expect($tokenCalls)->toBe(2);
 });
