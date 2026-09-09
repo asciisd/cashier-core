@@ -1337,6 +1337,20 @@ use Asciisd\CashierCore\Enums\PaymentStatus;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Asciisd\CashierCore\Models\Transaction;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Route;
+
+beforeEach(function () {
+    /*
+     * charge() returns a signed link to the bridge route, so that route has to
+     * exist for the URL to be signable. Task 5 registers it for real in the
+     * service provider; until then a stub stands in, and the guard makes this
+     * a no-op once the real one is registered.
+     */
+    if (! Route::has('cashier.checkout.xoala')) {
+        Route::get('/cashier/xoala/checkout/{transaction}', fn () => '')
+            ->name('cashier.checkout.xoala');
+    }
+});
 
 function xoalaConfig(array $overrides = []): array
 {
@@ -1637,7 +1651,14 @@ class XoalaProvider implements PaymentProcessorInterface, PreparesChargeData, Pr
             baseUrl: $this->baseUrl(),
             memberId: (string) $config['member_id'],
             secureKey: (string) $config['secure_key'],
-            cacheKey: (string) ($config['connection'] ?? 'xoala'),
+            // Keyed on the ACCOUNT, not the connection name. ConnectionRegistry
+            // hands a provider its raw connection config, which carries no
+            // connection name — so a name-based key would be the same constant
+            // for every account and hand one merchant's token to another's
+            // inquiry. Two connections onto one Xoala account (a per-currency
+            // split, say) may legitimately share a token, and this gets that
+            // right for free.
+            cacheKey: md5($this->baseUrl().'|'.$config['member_id']),
             username: ($config['username'] ?? null) ?: null,
         );
 
@@ -1940,12 +1961,9 @@ In `src/Cashier.php`, add to the `fakeConnection()` match before `default => []`
 - [ ] **Step 5: Run tests**
 
 Run: `vendor/bin/pest --filter=XoalaProvider`
-Expected: PASS
-
-The bridge route does not exist until Task 5, so the two tests asserting on
-`getRedirectUrl()` will fail with the "needs the `cashier.checkout.xoala` route"
-exception. That is correct ordering — mark those two tests `->todo()` here and
-remove the marker in Task 5 Step 6. Every other test must pass now.
+Expected: PASS — every test, with no skips or `->todo()` markers. The
+`beforeEach` stub route makes the signed-URL assertions real now, and Task 5
+replaces the stub with the registered route without touching this test.
 
 - [ ] **Step 6: Commit**
 
@@ -2320,7 +2338,7 @@ Create `resources/views/xoala/checkout.blade.php`:
 Run: `vendor/bin/pest --filter="XoalaCheckout|XoalaProvider"`
 Expected: PASS
 
-Remove the two `->todo()` markers added in Task 4 Step 5 — the route now exists, so those assertions must pass for real.
+The stub route in `XoalaProviderTest`'s `beforeEach` now no-ops, because the service provider registers the real one. Both files must pass together.
 
 - [ ] **Step 7: Commit**
 
@@ -2835,4 +2853,4 @@ Recorded here so a reviewer can see them rather than discover them:
 
 1. **`XoalaSignatureService::amount()`** — the spec describes the amount format as a rule but assigns it no home. It lives on the signature service as a static, because the format is a property of the digest (`50` and `50.00` hash differently), and the provider, the bridge and the tests all need the same one.
 2. **A `username` config key** — the merchant authToken sample shows `merchant.username` alongside `authentication.sKey`, but the merchant-token page documents only the sKey. The client sends it when configured and omits it otherwise. This joins the spec's "Assumptions to confirm" list; confirm it in the sandbox before relying on `retrieve()`.
-3. **A `connection` key read from config** for the token cache key. `XoalaProvider` reads `$config['connection'] ?? 'xoala'`. Verify how `ConnectionRegistry` builds provider config — if it does not inject the connection name, pass it explicitly or key the cache on the member id instead. Do not let two accounts share one cached token.
+3. **The auth-token cache key.** Resolved before execution: `ConnectionRegistry::get()` hands a provider the raw connection config, which carries no connection name — so the originally planned `$config['connection'] ?? 'xoala'` would have been the same constant for every account, handing one merchant's token to another's inquiry. The key is `md5(base_url|member_id)` instead, which is per-account by construction and lets two connections onto one Xoala account share a token correctly.
