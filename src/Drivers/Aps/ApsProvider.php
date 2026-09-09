@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Asciisd\CashierCore\Drivers\Aps;
 
+use Asciisd\CashierCore\Contracts\CustomerContract;
 use Asciisd\CashierCore\Contracts\PaymentProcessorInterface;
+use Asciisd\CashierCore\Contracts\PreparesChargeData;
+use Asciisd\CashierCore\Contracts\ProvidesBillingDetails;
 use Asciisd\CashierCore\Contracts\ProvidesWebhookTransactionId;
 use Asciisd\CashierCore\DataObjects\PaymentResult;
 use Asciisd\CashierCore\DataObjects\RefundResult;
@@ -14,9 +17,10 @@ use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Asciisd\CashierCore\Logging\PaymentLogger;
 use Illuminate\Http\Client\HttpClientException;
 use Illuminate\Http\Client\RequestException;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 
-class ApsProvider implements PaymentProcessorInterface, ProvidesWebhookTransactionId
+class ApsProvider implements PaymentProcessorInterface, PreparesChargeData, ProvidesWebhookTransactionId
 {
     private ApsClient $client;
 
@@ -27,6 +31,23 @@ class ApsProvider implements PaymentProcessorInterface, ProvidesWebhookTransacti
 
     /** @var string[] */
     private array $supportedFeatures = ['charge', 'refund', 'webhook'];
+
+    /**
+     * Canonical billing key => APS deposit field name.
+     *
+     * The first five are non-optional on methods that declare them — Apple Pay
+     * does, card and Binance Pay do not. `GET /api/v3/{merchantGuid}/info` is the
+     * authority for a given account; this map is only the translation.
+     */
+    private const BILLING_FIELD_MAP = [
+        'email' => 'from_email',
+        'country' => 'from_country',
+        'street' => 'billing_street',
+        'city' => 'billing_town',
+        'zip_code' => 'billing_post_code',
+        'region' => 'billing_state',
+        'phone' => 'from_mobile',
+    ];
 
     /**
      * One instance serves one APS merchant account.
@@ -56,6 +77,63 @@ class ApsProvider implements PaymentProcessorInterface, ProvidesWebhookTransacti
         $this->adapter = new ApsAdapter;
     }
 
+    /**
+     * Attach the customer's billing details, translated to APS field names.
+     *
+     * Opt-in per connection, and off by default: APS declares required fields
+     * per deposit method, and most methods declare none. Sending the block to an
+     * account that did not ask for it means putting a raw phone number and an
+     * unbounded freeform street line — from host columns nothing validates for
+     * APS's documented 2-100 character shape — into a payload that works today,
+     * on a PSP already observed to refuse on field *format*. A connection that
+     * does not set the flag therefore charges byte-identically to before.
+     *
+     * Which connection needs it is host knowledge (`GET /api/v3/{merchantGuid}/info`
+     * on that account is the authority), so it is expressed in the host's own
+     * connection config rather than by name in here.
+     *
+     * Nothing is invented: a value the host does not hold is simply absent, and
+     * APS answers with `transaction_info_needed` naming what it wanted. That is
+     * the intended loud failure — a fabricated billing country would instead be
+     * declined by the issuer, much later and much less legibly.
+     */
+    public function prepareChargeData(CustomerContract $customer, string $connection, array $paymentData): array
+    {
+        if (! ($this->config['send_billing_details'] ?? false)) {
+            return $paymentData;
+        }
+
+        if (! $customer instanceof ProvidesBillingDetails) {
+            return $paymentData;
+        }
+
+        $details = $customer->cashierBillingDetails();
+
+        // Required by every method that asks for anything, and always available
+        // on the contract, so it is the one value worth deriving.
+        $details['email'] ??= $customer->cashierEmail();
+
+        $mapped = [];
+
+        foreach (self::BILLING_FIELD_MAP as $canonical => $apsField) {
+            $value = $details[$canonical] ?? null;
+
+            if ($value !== null && $value !== '') {
+                $mapped[$apsField] = (string) $value;
+            }
+        }
+
+        if ($mapped !== []) {
+            $paymentData['billing_details'] = array_merge(
+                $mapped,
+                // An explicit caller-supplied value wins over the customer model.
+                (array) ($paymentData['billing_details'] ?? []),
+            );
+        }
+
+        return $paymentData;
+    }
+
     public function charge(array $data): PaymentResult
     {
         $validated = $this->validatePaymentData($data);
@@ -68,17 +146,22 @@ class ApsProvider implements PaymentProcessorInterface, ProvidesWebhookTransacti
 
         $externalId = $data['external_id'] ?? 'DEP-'.Str::ulid();
 
+        $deposit = array_filter([
+            'redirect_url' => $this->config['redirect_url'] ?? (Route::has('payment.success') ? route('payment.success') : null),
+            'status_callback_url' => $this->config['webhook_url'] ?? (Route::has('webhooks.aps') ? route('webhooks.aps') : null),
+            'external_id' => $externalId,
+            'customer_ip_address' => $data['metadata']['ip_address'] ?? request()->ip(),
+        ]);
+
+        // Already filtered of nulls and empties by prepareChargeData().
+        $deposit = array_merge($deposit, (array) ($data['billing_details'] ?? []));
+
         $payload = [
             'amount' => (float) $validated['amount'],
             'fields' => [
                 'transaction' => [
                     'deposit_method' => $methodGuid,
-                    'deposit' => array_filter([
-                        'redirect_url' => $this->config['redirect_url'] ?? (\Illuminate\Support\Facades\Route::has('payment.success') ? route('payment.success') : null),
-                        'status_callback_url' => $this->config['webhook_url'] ?? (\Illuminate\Support\Facades\Route::has('webhooks.aps') ? route('webhooks.aps') : null),
-                        'external_id' => $externalId,
-                        'customer_ip_address' => $data['metadata']['ip_address'] ?? request()->ip(),
-                    ]),
+                    'deposit' => $deposit,
                 ],
             ],
         ];
@@ -91,7 +174,14 @@ class ApsProvider implements PaymentProcessorInterface, ProvidesWebhookTransacti
             // and would otherwise escape as an uncaught 500 with nothing logged.
             $status = $e instanceof RequestException ? $e->response?->status() : null;
 
-            PaymentLogger::providerChargeRequestFailed('aps', $status, $e->getMessage());
+            // NOT $e->getMessage(): Laravel truncates it at 120 characters, which
+            // is one field name out of the five a `transaction_info_needed` refusal
+            // lists. The full body is what makes that failure diagnosable.
+            $message = $e instanceof RequestException
+                ? Str::limit((string) $e->response?->body(), 1000)
+                : $e->getMessage();
+
+            PaymentLogger::providerChargeRequestFailed('aps', $status, $message);
             throw new PaymentProcessingException('APS deposit could not be created.');
         }
 

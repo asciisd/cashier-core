@@ -79,6 +79,8 @@ syncs use the exact account that took the charge (`transactions.connection`).
         'app_secret' => env('APS_APPLEPAY_APP_SECRET'),
         'callback_secret' => env('APS_APPLEPAY_CALLBACK_SECRET'),
         'deposit_method' => env('APS_APPLEPAY_DEPOSIT_METHOD'),
+        // Opt in to the customer/billing block (default false).
+        'send_billing_details' => true,
     ],
 ],
 ```
@@ -90,6 +92,17 @@ URL because APS callbacks carry no merchant identifier and the sender is found
 by trying each account's `callback_secret` until one verifies. An account's
 `deposit_method` guid comes from `GET /api/v3/{merchantGuid}/info` on that
 account.
+
+`send_billing_details` is the one APS key that changes what leaves the app.
+With it on, and a customer model implementing `ProvidesBillingDetails`, the
+charge carries `from_email`, `from_country`, `from_mobile`, `billing_street`,
+`billing_town`, `billing_post_code` and `billing_state` — whichever of those the
+host actually holds; a missing value is dropped, never substituted. It is **off
+by default** because APS declares required customer fields *per deposit method*
+and most methods declare none: the same `/info` call that gives you the
+`deposit_method` guid says whether the account wants any of this. Turn it on
+only for an account that asks, and a connection that leaves it unset charges
+exactly as it did before.
 
 Bundled drivers resolve automatically; a connection with a `class` key
 overrides the driver map, and plugins append their drivers to
