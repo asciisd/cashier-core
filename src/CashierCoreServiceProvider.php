@@ -103,6 +103,7 @@ class CashierCoreServiceProvider extends ServiceProvider
         $this->loadMigrations();
         $this->registerCommands();
         $this->registerRateLimiter();
+        $this->loadViewsFrom(__DIR__.'/../resources/views', 'cashier-core');
         $this->registerRoutes();
     }
 
@@ -135,6 +136,14 @@ class CashierCoreServiceProvider extends ServiceProvider
         ], function () {
             $this->loadRoutesFrom(__DIR__.'/../routes/webhooks.php');
         });
+
+        Route::group([
+            'prefix' => config('cashier-core.routes.checkout.prefix', 'cashier'),
+            'as' => config('cashier-core.routes.checkout.name_prefix', 'cashier.checkout.'),
+            'middleware' => config('cashier-core.routes.checkout.middleware', ['signed', 'throttle:cashier-checkout']),
+        ], function () {
+            $this->loadRoutesFrom(__DIR__.'/../routes/checkout.php');
+        });
     }
 
     /**
@@ -148,6 +157,13 @@ class CashierCoreServiceProvider extends ServiceProvider
             RateLimiter::for(
                 'cashier-webhooks',
                 fn (Request $request) => Limit::perMinute(120)->by($request->ip())
+            );
+        }
+
+        if (RateLimiter::limiter('cashier-checkout') === null) {
+            RateLimiter::for(
+                'cashier-checkout',
+                fn (Request $request) => Limit::perMinute(30)->by($request->ip())
             );
         }
     }
@@ -180,6 +196,10 @@ class CashierCoreServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__.'/../database/migrations' => database_path('migrations'),
             ], 'cashier-core-migrations');
+
+            $this->publishes([
+                __DIR__.'/../resources/views' => resource_path('views/vendor/cashier-core'),
+            ], 'cashier-core-views');
         }
     }
 

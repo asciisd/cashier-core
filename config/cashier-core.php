@@ -170,6 +170,20 @@ return [
          */
         'without_middleware' => [],
         'name_prefix' => 'cashier.webhooks.',
+
+        /*
+         * The hosted-checkout bridge. Xoala's Standard Checkout is entered by
+         * a browser form POST rather than a URL, so the package serves a signed
+         * GET page that submits that form. No `web` middleware: the page holds
+         * no session and no CSRF token, and requiring the host's `web` group
+         * would be a surprising coupling for a page whose only job is to
+         * submit to an external host.
+         */
+        'checkout' => [
+            'prefix' => env('CASHIER_CHECKOUT_PREFIX', 'cashier'),
+            'middleware' => ['signed', 'throttle:cashier-checkout'],
+            'name_prefix' => 'cashier.checkout.',
+        ],
     ],
 
     /*
