@@ -1145,7 +1145,9 @@ final class XoalaClient
             PaymentLogger::providerTransactionLookupFailed(
                 'xoala',
                 $merchantTransactionId,
-                null,
+                // 0, not null: the logger types this `int`, and a connection
+                // failure produced no response to take a status from.
+                0,
                 $e->getMessage(),
             );
 
@@ -1283,7 +1285,18 @@ final class XoalaClient
 Run: `vendor/bin/pest --filter=XoalaClient`
 Expected: PASS
 
-Note: if `PaymentLogger::providerTransactionLookupFailed()` or `providerChargeRequestFailed()` have different signatures than used here, check `src/Logging/PaymentLogger.php` and match the real ones — do not invent new logger methods.
+The two logger signatures this task calls, confirmed against
+`src/Logging/PaymentLogger.php`:
+
+```php
+providerChargeRequestFailed(string $provider, ?int $httpStatus, string $error): void
+providerTransactionLookupFailed(string $provider, string $providerTransactionId, int $httpStatus, string $body): void
+```
+
+Note the asymmetry: the charge one takes a **nullable** status, the lookup one
+does **not**. Under `strict_types` passing `null` to the lookup logger is a
+TypeError, which is why the transport-failure branch passes `0`. Do not invent
+new logger methods, and do not widen the existing signatures.
 
 - [ ] **Step 5: Commit**
 
