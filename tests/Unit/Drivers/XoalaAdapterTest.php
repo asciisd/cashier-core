@@ -106,6 +106,18 @@ it('carries the result code and description onto a failed update', function () {
         ->and($update->errorMessage)->toBe('Transaction failed');
 });
 
+it('carries the result code and description onto a chargeback update', function () {
+    $update = (new XoalaAdapter)->fromWebhook(xoalaCallbackPayload([
+        'status' => 'chargeback',
+        'transactionStatus' => 'C',
+        'result' => ['code' => '20004', 'description' => 'Chargeback received'],
+    ]));
+
+    expect($update->status)->toBe(PaymentStatus::Canceled)
+        ->and($update->errorCode)->toBe('20004')
+        ->and($update->errorMessage)->toBe('Chargeback received');
+});
+
 it('leaves error fields unset on a success', function () {
     $update = (new XoalaAdapter)->fromWebhook(xoalaCallbackPayload());
 

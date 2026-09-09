@@ -127,15 +127,19 @@ class XoalaAdapter implements PaymentAdapterInterface
     public function fromWebhook(array $payload): TransactionWebhookUpdate
     {
         $status = $this->statusFor($payload);
-        $failed = $status === PaymentStatus::Failed;
+        // Canceled covers reversed/chargeback as well as an outright
+        // cancellation, and WebhookProcessor writes error_code/error_message
+        // on a Canceled transition too — a chargeback is the one status where
+        // an operator most needs the reason, so it must carry one here.
+        $carriesReason = $status === PaymentStatus::Failed || $status === PaymentStatus::Canceled;
 
         return new TransactionWebhookUpdate(
             status: $status,
             processorResponse: $payload,
             paymentMethodSnapshot: $this->snapshot($payload),
             metadata: $this->metadataFrom($payload),
-            errorCode: $failed ? $this->resultCode($payload) : null,
-            errorMessage: $failed ? $this->resultDescription($payload) : null,
+            errorCode: $carriesReason ? $this->resultCode($payload) : null,
+            errorMessage: $carriesReason ? $this->resultDescription($payload) : null,
             // float, not int: TransactionWebhookUpdate keeps the decimals, and
             // the reconciliation guard in WebhookProcessor compares against the
             // invoice with them.

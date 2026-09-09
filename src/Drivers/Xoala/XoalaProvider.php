@@ -152,10 +152,17 @@ class XoalaProvider implements PaymentProcessorInterface, PreparesChargeData, Pr
     {
         $merchantTransactionId = (string) $transaction->provider_transaction_id;
 
-        // The charge leg, not the account amount: on a converted deposit the
-        // engine priced a foreign leg and that is the figure Xoala invoices.
+        // Three different amounts live on the row and they are not
+        // interchangeable: `amount` is what the customer deposits and the
+        // ledger is credited, `requested_amount` is that figure grossed up
+        // for fees — what we actually invoice the PSP — and `charge_amount`
+        // is the converted foreign leg, set only when the connection invoices
+        // a different currency. This chain mirrors the one
+        // WebhookProcessor::deviationBeyondTolerance() uses to compute the
+        // expected amount, so the figure we sign here and the figure the
+        // reconciliation guard expects can never diverge.
         $amount = XoalaSignatureService::amount(
-            $transaction->charge_amount ?? $transaction->amount
+            $transaction->charge_amount ?? $transaction->requested_amount ?? $transaction->amount
         );
         $currency = strtoupper((string) ($transaction->charge_currency ?? $transaction->currency));
 

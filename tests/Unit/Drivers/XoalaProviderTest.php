@@ -170,6 +170,22 @@ it('signs the charge leg, not the account amount, on a converted deposit', funct
         ->and($form['fields']['currency'])->toBe('SAR');
 });
 
+it('signs the grossed-up amount, not the ledger amount, when fees apply', function () {
+    $transaction = new Transaction([
+        'provider' => 'xoala',
+        'provider_transaction_id' => 'DEP-1',
+        'amount' => 100.0,
+        'requested_amount' => 103.09,
+        'currency' => 'USD',
+        'charge_amount' => null,
+        'charge_currency' => null,
+    ]);
+
+    $form = xoalaProvider()->checkoutForm($transaction);
+
+    expect($form['fields']['amount'])->toBe('103.09');
+});
+
 it('verifies a webhook signature through the signature service', function () {
     $service = new XoalaSignatureService('11344', 'secure-key');
 
