@@ -9,6 +9,7 @@ use Asciisd\CashierCore\Drivers\Jenapay\JenapayHashService;
 use Asciisd\CashierCore\Drivers\Myfatoorah\MyfatoorahSignatureService;
 use Asciisd\CashierCore\Drivers\Payport\PayportSignatureService;
 use Asciisd\CashierCore\Drivers\Sticpay\SticpaySignatureService;
+use Asciisd\CashierCore\Drivers\Xoala\XoalaSignatureService;
 use InvalidArgumentException;
 
 /**
@@ -64,6 +65,7 @@ final class WebhookSimulator
             'jenapay' => self::jenapay($uri, $payload, $config),
             'payport' => self::payport($uri, $payload, $config),
             'sticpay' => self::sticpay($uri, $payload, $config),
+            'xoala' => self::xoala($uri, $payload, $config),
 
             default => throw new InvalidArgumentException(
                 "WebhookSimulator has no signing recipe for driver '{$driver}'."
@@ -152,5 +154,29 @@ final class WebhookSimulator
         ])];
 
         return new SignedWebhook($uri, $body, [], 'form');
+    }
+
+    /**
+     * Xoala signs the SHORT status — `transactionStatus`, not the long `status`
+     * a callback also carries.
+     *
+     * @param  array<string, mixed>  $payload
+     * @param  array<string, mixed>  $config
+     */
+    private static function xoala(string $uri, array $payload, array $config): SignedWebhook
+    {
+        $service = new XoalaSignatureService(
+            (string) ($config['member_id'] ?? ''),
+            (string) ($config['secure_key'] ?? ''),
+        );
+
+        $payload['checksum'] = $service->forCallback(
+            (string) ($payload['paymentId'] ?? ''),
+            (string) ($payload['merchantTransactionId'] ?? ''),
+            (string) ($payload['amount'] ?? ''),
+            (string) ($payload['transactionStatus'] ?? $payload['status'] ?? ''),
+        );
+
+        return new SignedWebhook($uri, $payload, [], 'form');
     }
 }
