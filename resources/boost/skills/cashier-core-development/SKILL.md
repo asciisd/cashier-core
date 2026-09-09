@@ -111,6 +111,7 @@ refunds and syncs use the exact account that took the charge.
         'member_id' => env('XOALA_MEMBER_ID'),
         'secure_key' => env('XOALA_SECURE_KEY'),
         'totype' => env('XOALA_TOTYPE'),          // 2nd checksum field; wrong value fails silently
+        'username' => env('XOALA_USERNAME'),      // optional; sent as merchant.username for the auth token retrieve() needs
         'transaction_type' => env('XOALA_TRANSACTION_TYPE', 'DB'), // DB authorizes+captures; PA holds funds
     ],
 ],

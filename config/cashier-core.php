@@ -137,6 +137,14 @@ return [
     |     // a wrong value fails the payment at the hosted page with no useful
     |     // message. The provider refuses to resolve without it.
     |     'totype' => env('XOALA_TOTYPE'),
+    |     // Optional. Sent as `merchant.username` when generating the REST
+    |     // auth token that retrieve()/sync depends on. Whether an account
+    |     // requires it is unconfirmed — the merchant auth-token page
+    |     // documents only the secure key, but Xoala's own sample request
+    |     // also carries a username — and it is left off the request
+    |     // entirely when unset, so leaving this blank is safe to try first.
+    |     // Plays no part in any checksum.
+    |     'username' => env('XOALA_USERNAME'),
     |     // Optional. Required on some account shapes ("Conditional" in the
     |     // spec); sent only when set.
     |     'terminal_id' => env('XOALA_TERMINAL_ID'),

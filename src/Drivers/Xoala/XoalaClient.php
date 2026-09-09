@@ -28,9 +28,13 @@ final class XoalaClient
     private const TOKEN_TTL_SECONDS = 3300;
 
     /**
-     * @param  string  $cacheKey  the connection name — tokens are per merchant
-     *                            account, and a shared key would hand one
-     *                            account's token to another's inquiry
+     * @param  string  $cacheKey  md5(base_url|memberId) — tokens are per
+     *                            merchant account, and ConnectionRegistry
+     *                            hands this client raw config with no
+     *                            connection name to key on, so the key is
+     *                            derived from the account's own identifying
+     *                            fields instead. A shared key would hand one
+     *                            account's token to another's inquiry.
      * @param  string|null  $username  sent as `merchant.username` when the
      *                                 account requires it; see the spec's
      *                                 "Assumptions to confirm"
