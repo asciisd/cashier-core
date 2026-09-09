@@ -187,6 +187,14 @@ final class Cashier
                 'redirect_url' => 'https://members.example.com/payment/success',
                 'webhook_url' => 'https://members.example.com/api/webhooks/myfatoorah',
             ],
+            'xoala' => [
+                'base_url' => 'https://secure-checkout-sandbox.xoala.com',
+                'member_id' => '11344',
+                'secure_key' => "{$name}-secure-key",
+                'totype' => 'TestPartner',
+                'redirect_url' => 'https://members.example.com/payment/success',
+                'webhook_url' => 'https://members.example.com/api/webhooks/xoala',
+            ],
             default => [],
         };
 

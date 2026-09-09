@@ -33,6 +33,7 @@ class CashierCoreServiceProvider extends ServiceProvider
         'payport' => Drivers\Payport\PayportProvider::class,
         'sticpay' => Drivers\Sticpay\SticpayProvider::class,
         'myfatoorah' => Drivers\Myfatoorah\MyfatoorahProvider::class,
+        'xoala' => Drivers\Xoala\XoalaProvider::class,
         'manual' => Drivers\Internal\ManualProvider::class,
         'bank_transfer' => Drivers\Internal\BankTransferProvider::class,
         'crypto' => Drivers\Internal\CryptoProvider::class,
