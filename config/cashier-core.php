@@ -117,6 +117,60 @@ return [
     |     'currency' => 'SAR',
     | ],
     |
+    | Xoala is a white-label of the Paymentz platform. Deposits go through
+    | Standard Checkout, whose entry point is a browser form POST rather than a
+    | URL — the package serves a signed bridge page that submits it, so nothing
+    | in the host application has to render the form.
+    |
+    | 'xoala' => [
+    |     'driver' => 'xoala',
+    |     // Sandbox: https://secure-checkout-sandbox.xoala.com
+    |     // Live:    https://secure-checkout.xoala.com
+    |     'base_url' => env('XOALA_BASE_URL'),
+    |     // Merchant id, assigned by Xoala. Authenticates every request.
+    |     'member_id' => env('XOALA_MEMBER_ID'),
+    |     // Generated in the Xoala dashboard. Signs every checksum, and is
+    |     // never itself transmitted.
+    |     'secure_key' => env('XOALA_SECURE_KEY'),
+    |     // Required, and account-specific — the spec calls it "Merchant's
+    |     // Partner name". It is the second field of the request checksum, so
+    |     // a wrong value fails the payment at the hosted page with no useful
+    |     // message. The provider refuses to resolve without it.
+    |     'totype' => env('XOALA_TOTYPE'),
+    |     // Optional. Sent as `merchant.username` when generating the REST
+    |     // auth token that retrieve()/sync depends on. Whether an account
+    |     // requires it is unconfirmed — the merchant auth-token page
+    |     // documents only the secure key, but Xoala's own sample request
+    |     // also carries a username — and it is left off the request
+    |     // entirely when unset, so leaving this blank is safe to try first.
+    |     // Plays no part in any checksum.
+    |     'username' => env('XOALA_USERNAME'),
+    |     // Optional. Required on some account shapes ("Conditional" in the
+    |     // spec); sent only when set.
+    |     'terminal_id' => env('XOALA_TERMINAL_ID'),
+    |     // Optional. Restricts the hosted page to one method — e.g. CC.
+    |     // Unset shows every method the account has enabled.
+    |     'payment_mode' => env('XOALA_PAYMENT_MODE'),
+    |     'payment_brand' => env('XOALA_PAYMENT_BRAND'),
+    |     // Optional. DB authorizes and captures in one step, which is what a
+    |     // deposit wants; PA leaves the funds held and uncaptured.
+    |     'transaction_type' => env('XOALA_TRANSACTION_TYPE', 'DB'),
+    |     // Optional. The currency this connection invoices in, declared to
+    |     // the engine before the charge so it can price a converted leg.
+    |     'currency' => env('XOALA_CURRENCY'),
+    |     // Optional — these fall back to the `payment.success` and
+    |     // `cashier.webhooks.xoala` routes where the host defines them.
+    |     'redirect_url' => env('XOALA_REDIRECT_URL'),
+    |     'webhook_url' => env('XOALA_WEBHOOK_URL'),
+    |     // Optional. Hosted page language; defaults to the app locale.
+    |     'language' => env('XOALA_LANGUAGE'),
+    | ],
+    |
+    | A second Xoala merchant account is another connection on the same driver.
+    | Both post to the one `cashier.webhooks.xoala` URL and the payload names
+    | no merchant, so the sender is identified by whose secure key verifies the
+    | checksum.
+    |
     */
     'connections' => [],
 
@@ -170,6 +224,20 @@ return [
          */
         'without_middleware' => [],
         'name_prefix' => 'cashier.webhooks.',
+
+        /*
+         * The hosted-checkout bridge. Xoala's Standard Checkout is entered by
+         * a browser form POST rather than a URL, so the package serves a signed
+         * GET page that submits that form. No `web` middleware: the page holds
+         * no session and no CSRF token, and requiring the host's `web` group
+         * would be a surprising coupling for a page whose only job is to
+         * submit to an external host.
+         */
+        'checkout' => [
+            'prefix' => env('CASHIER_CHECKOUT_PREFIX', 'cashier'),
+            'middleware' => ['signed', 'throttle:cashier-checkout'],
+            'name_prefix' => 'cashier.checkout.',
+        ],
     ],
 
     /*

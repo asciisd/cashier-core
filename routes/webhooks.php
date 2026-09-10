@@ -8,6 +8,7 @@ use Asciisd\CashierCore\Http\Controllers\Webhooks\JenapayWebhookController;
 use Asciisd\CashierCore\Http\Controllers\Webhooks\MyfatoorahWebhookController;
 use Asciisd\CashierCore\Http\Controllers\Webhooks\PayportWebhookController;
 use Asciisd\CashierCore\Http\Controllers\Webhooks\SticpayWebhookController;
+use Asciisd\CashierCore\Http\Controllers\Webhooks\XoalaWebhookController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -28,3 +29,4 @@ Route::post('/heropayment', HeropaymentWebhookController::class)->name('heropaym
 Route::post('/payport', PayportWebhookController::class)->name('payport');
 Route::post('/sticpay', SticpayWebhookController::class)->name('sticpay');
 Route::post('/myfatoorah', MyfatoorahWebhookController::class)->name('myfatoorah');
+Route::post('/xoala', XoalaWebhookController::class)->name('xoala');

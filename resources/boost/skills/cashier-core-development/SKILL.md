@@ -13,8 +13,9 @@ PCI posture. The host owns its users, its funds system, and every side effect (m
 
 **Namespace:** `Asciisd\CashierCore` · **Requires:** PHP ^8.3, Laravel ^11|^12|^13
 
-Six direct PSP drivers ship bundled — **APS, Jenapay, Heropayment, Payport, Sticpay, MyFatoorah** — plus
-internal `manual`, `bank_transfer`, `crypto`. All are hosted-redirect (SAQ-A: no PAN/CVV in the app).
+Seven direct PSP drivers ship bundled — **APS, Jenapay, Heropayment, Payport, Sticpay, MyFatoorah,
+Xoala** — plus internal `manual`, `bank_transfer`, `crypto`. All are hosted-redirect (SAQ-A: no
+PAN/CVV in the app).
 Paytiko and KNET are separate plugins that register their drivers into this core.
 
 ## ⚠️ v1 is gone — do not reintroduce it
@@ -53,7 +54,7 @@ Services/
 └── Webhooks/{WebhookProcessor, ReplayGuard, WebhookRelay}
 Withdrawals/WithdrawalWorkflow — request / approve / reject / markPaid / cancel
 Fees/{FeeCalculator, FeeBreakdown, SettledAmount, SettledAmountResolver}
-Drivers/{Aps, Jenapay, Heropayment, Payport, Sticpay, Myfatoorah, Internal}
+Drivers/{Aps, Jenapay, Heropayment, Payport, Sticpay, Myfatoorah, Xoala, Internal}
 Http/Controllers/Webhooks/*    — one per bundled driver, all sharing the pipeline
 Jobs/{ProcessPaymentProviderWebhook, RelayWebhook}
 Models/{Transaction, Refund, WebhookEvent, AdminAction}
@@ -101,6 +102,17 @@ refunds and syncs use the exact account that took the charge.
         'webhook_secret' => env('MYFATOORAH_WEBHOOK_SECRET'),
         'currency' => 'KWD',            // MyFatoorah cannot charge USD
         'payment_method' => 'KNET',     // omit for MyFatoorah's own picker
+    ],
+    // Xoala's Standard Checkout is entered by a browser form POST, not a URL —
+    // the package serves a signed bridge page that submits it for you.
+    'xoala' => [
+        'driver' => 'xoala',
+        'base_url' => env('XOALA_BASE_URL'),
+        'member_id' => env('XOALA_MEMBER_ID'),
+        'secure_key' => env('XOALA_SECURE_KEY'),
+        'totype' => env('XOALA_TOTYPE'),          // 2nd checksum field; wrong value fails silently
+        'username' => env('XOALA_USERNAME'),      // optional; sent as merchant.username for the auth token retrieve() needs
+        'transaction_type' => env('XOALA_TRANSACTION_TYPE', 'DB'), // DB authorizes+captures; PA holds funds
     ],
 ],
 

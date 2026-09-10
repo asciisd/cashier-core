@@ -10,11 +10,11 @@ row-locked transitions, amount-deviation holds), an approve-first withdrawal
 workflow with an audit trail, and a ledger contract that keeps your funds system
 (MT5, wallet, banking core) behind an interface you own.
 
-Six direct PSP drivers ship bundled — **APS, Jenapay, Heropayment, Payport,
-Sticpay, MyFatoorah** — plus internal `manual`, `bank_transfer` and `crypto`
-providers. All of them are hosted-redirect: no PAN or CVV ever touches your
-application (SAQ-A posture). Paytiko and KNET remain separate plugins
-(`asciisd/cashier-paytiko`, `asciisd/knet`) built on this core.
+Seven direct PSP drivers ship bundled — **APS, Jenapay, Heropayment, Payport,
+Sticpay, MyFatoorah, Xoala** — plus internal `manual`, `bank_transfer` and
+`crypto` providers. All of them are hosted-redirect: no PAN or CVV ever
+touches your application (SAQ-A posture). Paytiko and KNET remain separate
+plugins (`asciisd/cashier-paytiko`, `asciisd/knet`) built on this core.
 
 MyFatoorah covers the GCC plus Jordan and Egypt (card, KNET, Apple Pay, Google
 Pay) on its V3 API,
@@ -23,6 +23,12 @@ connection per country**: MyFatoorah issues one API key per country and each
 key must be sent to that country's host. Note that reaching KNET *through*
 MyFatoorah is not the same as the standalone `asciisd/knet` plugin, which
 integrates KNET directly.
+
+Xoala (a white-label of the Paymentz platform) covers card and alternative
+rails through its hosted Standard Checkout. Its checkout is entered by a form
+POST rather than a URL, so the package serves a signed bridge page at
+`{prefix}/xoala/checkout/{id}` that submits the signed field set for you —
+nothing in the host application has to render it.
 
 Upgrading from 1.x? Read [UPGRADE-2.0.md](UPGRADE-2.0.md).
 
