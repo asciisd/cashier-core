@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Asciisd\CashierCore\Drivers\Digiblox;
 
+use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
 use Asciisd\CashierCore\Enums\PaymentStatus;
 
 /**
@@ -156,6 +157,40 @@ class DigibloxAdapter
             (string) ($row['amount'] ?? '0'),
             (string) ($row['system_fee'] ?? '0'),
             9,
+        );
+    }
+
+    /**
+     * Turn a deposit webhook into a transaction update.
+     *
+     * Reconciliation runs on total_amount. PARTIALLY_PAID becomes OnHold, not
+     * Failed: the funds are real and already credited, the order simply is not
+     * covered.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    public function fromWebhook(array $payload): TransactionWebhookUpdate
+    {
+        $status = $this->mapWebhookStatus($payload['status'] ?? null);
+
+        return new TransactionWebhookUpdate(
+            status: $status,
+            processorResponse: $payload,
+            metadata: array_filter([
+                'tx_hash' => $payload['tx_hash'] ?? null,
+                'network' => $payload['network'] ?? null,
+                'from_address' => $payload['from_address'] ?? null,
+                'to_address' => $payload['to_address'] ?? null,
+                'expected_amount' => $payload['expected_amount'] ?? null,
+                'total_amount' => $payload['total_amount'] ?? null,
+                'covered' => $this->isCovered($payload),
+            ], fn ($value) => $value !== null),
+            errorMessage: $status === PaymentStatus::OnHold
+                ? 'Digiblox reported '.((string) ($payload['status'] ?? 'an unknown status')).' — held for review.'
+                : null,
+            // The gross the payer sent, not the fee-netted credit.
+            amount: isset($payload['total_amount']) ? (float) $payload['total_amount'] : null,
+            currency: isset($payload['currency']) ? strtoupper((string) $payload['currency']) : null,
         );
     }
 }
