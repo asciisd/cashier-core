@@ -195,3 +195,67 @@ describe('reconciliation', function () {
         ]))->toBe('15023.830599000');
     });
 });
+
+describe('fromWebhook', function () {
+    it('maps COMPLETED to Succeeded, reconciling on total_amount, not the fee-netted amount', function () {
+        // total_amount (150.000000) is what the payer sent; amount
+        // (149.700000) is already net of the platform fee. Reconciling on
+        // amount would look 0.30 short of a fully covered order.
+        $update = $this->adapter->fromWebhook([
+            'status' => 'COMPLETED',
+            'expected_amount' => '150.000000',
+            'total_amount' => '150.000000',
+            'amount' => '149.700000',
+            'currency' => 'USDT',
+            'tx_hash' => '0xabc',
+            'network' => 'TRON',
+            'from_address' => '0xfrom',
+            'to_address' => '0xto',
+        ]);
+
+        expect($update->status)->toBe(PaymentStatus::Succeeded)
+            ->and($update->amount)->toBe(150.0)
+            ->and($update->currency)->toBe('USDT')
+            ->and($update->metadata['covered'])->toBeTrue()
+            ->and($update->errorMessage)->toBeNull()
+            ->and($update->metadata['tx_hash'])->toBe('0xabc')
+            ->and($update->metadata['network'])->toBe('TRON')
+            ->and($update->metadata['from_address'])->toBe('0xfrom')
+            ->and($update->metadata['to_address'])->toBe('0xto');
+    });
+
+    it('maps PARTIALLY_PAID to OnHold, not Failed, with an errorMessage naming the verdict', function () {
+        $update = $this->adapter->fromWebhook([
+            'status' => 'PARTIALLY_PAID',
+            'expected_amount' => '150.000000',
+            'total_amount' => '120.000000',
+            'amount' => '119.760000',
+            'currency' => 'USDT',
+        ]);
+
+        expect($update->status)->toBe(PaymentStatus::OnHold)
+            ->and($update->metadata['covered'])->toBeFalse()
+            ->and($update->errorMessage)->toContain('PARTIALLY_PAID');
+    });
+
+    it('maps OVERPAID to Succeeded and covered', function () {
+        $update = $this->adapter->fromWebhook([
+            'status' => 'OVERPAID',
+            'expected_amount' => '150.000000',
+            'total_amount' => '175.500000',
+        ]);
+
+        expect($update->status)->toBe(PaymentStatus::Succeeded)
+            ->and($update->metadata['covered'])->toBeTrue();
+    });
+
+    it('maps an unrecognised verdict to OnHold, never to Succeeded', function () {
+        $update = $this->adapter->fromWebhook([
+            'status' => 'SOMETHING_NEW',
+            'expected_amount' => '150.000000',
+            'total_amount' => '150.000000',
+        ]);
+
+        expect($update->status)->toBe(PaymentStatus::OnHold);
+    });
+});

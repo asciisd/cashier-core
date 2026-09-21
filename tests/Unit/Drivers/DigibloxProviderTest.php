@@ -54,6 +54,16 @@ it('mints an external id when the caller does not supply one', function () {
     expect($result->transactionId)->toStartWith('DEP-');
 });
 
+it('converts a transport failure into a PaymentProcessingException', function () {
+    // A connection timeout is a ConnectionException — a sibling of
+    // RequestException, not a subclass — so catching RequestException alone
+    // lets it escape as an uncaught 500 with nothing logged.
+    Http::fake(fn () => throw new Illuminate\Http\Client\ConnectionException('cURL error 28: timed out'));
+
+    expect(fn () => (new DigibloxProvider(digibloxConfig()))->charge(['amount' => 100, 'currency' => 'USD']))
+        ->toThrow(PaymentProcessingException::class, 'could not be created');
+});
+
 it('reports the status of the most recent deposit row', function () {
     Http::fake([
         'https://digiblox.test/gateway/api/v1/auth/login/jwt' => Http::response(['token' => 'jwt']),
@@ -74,6 +84,42 @@ it('reports the status of the most recent deposit row', function () {
 
     expect($provider->getPaymentStatus('DEP-1'))->toBe(PaymentStatus::Succeeded->value)
         ->and($provider->retrieve('DEP-1')->status)->toBe(PaymentStatus::Succeeded);
+});
+
+it('reports Succeeded when a CONFIRMED row is not first, never trusting result[0]', function () {
+    // searchDeposits sorts newest-created first, not newest-settled. Here the
+    // newest row (index 0) is Digiblox's own internal settlement row, still
+    // SENT_TOKEN, sitting in front of the customer's already-CONFIRMED
+    // payment. Reporting rows[0] would call this fully paid order Pending.
+    Http::fake([
+        'https://digiblox.test/gateway/api/v1/auth/login/jwt' => Http::response(['token' => 'jwt']),
+        'https://digiblox.test/gateway/api/v1/v3/deposits/merchant*' => Http::response([
+            'totalItems' => 2,
+            'result' => [
+                [
+                    'external_transaction_id' => 'DEP-1',
+                    'status' => 'SENT_TOKEN',
+                    'amount' => '5.000000',
+                    'system_fee' => '0.010000',
+                    'tx_hash' => '0xnewest',
+                ],
+                [
+                    'external_transaction_id' => 'DEP-1',
+                    'status' => 'CONFIRMED',
+                    'amount' => '149.700000',
+                    'system_fee' => '0.300000',
+                    'tx_hash' => '0xconfirmed',
+                ],
+            ],
+        ]),
+    ]);
+
+    $result = (new DigibloxProvider(digibloxConfig()))->retrieve('DEP-1');
+
+    expect($result->status)->toBe(PaymentStatus::Succeeded)
+        ->and($result->metadata['tx_hash'])->toBe('0xconfirmed')
+        ->and($result->metadata['deposit_rows'])->toBe(2)
+        ->and($result->processorResponse)->toHaveCount(2);
 });
 
 it('returns null from retrieve when no deposit exists yet', function () {
