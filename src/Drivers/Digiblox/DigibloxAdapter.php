@@ -149,14 +149,24 @@ class DigibloxAdapter
      * Gross received = credited amount + platform fee. Both arrive already
      * decimal-converted, so Currency.decimals is reference only.
      *
+     * Both operands are normalised through number_format() before bcadd():
+     * Digiblox's transfer surface can return either field as a JSON number
+     * (`"system_fee": 0.2`), and a sub-1e-5 fee — routine for BTC/ETH — casts
+     * to a scientific-notation string ("2.6E-6") that bcmath's "well-formed
+     * numeric string" rules reject with an uncaught ValueError instead of the
+     * PaymentProcessingException this driver contracts to throw.
+     *
+     * Scale 18, not 9: at scale 9 an 18-decimal asset silently loses dust
+     * (0.123456789012345678 rounds to 0.123456789).
+     *
      * @param  array<string, mixed>  $row
      */
     public function grossReceived(array $row): string
     {
         return bcadd(
-            (string) ($row['amount'] ?? '0'),
-            (string) ($row['system_fee'] ?? '0'),
-            9,
+            number_format((float) ($row['amount'] ?? '0'), 18, '.', ''),
+            number_format((float) ($row['system_fee'] ?? '0'), 18, '.', ''),
+            18,
         );
     }
 
@@ -188,9 +198,19 @@ class DigibloxAdapter
             errorMessage: $status === PaymentStatus::OnHold
                 ? 'Digiblox reported '.((string) ($payload['status'] ?? 'an unknown status')).' — held for review.'
                 : null,
-            // The gross the payer sent, not the fee-netted credit.
-            amount: isset($payload['total_amount']) ? (float) $payload['total_amount'] : null,
-            currency: isset($payload['currency']) ? strtoupper((string) $payload['currency']) : null,
+            // Deliberately null, both of them. total_amount/currency here are
+            // crypto units ("150.000000" USDT); the transaction this update is
+            // applied to was charged in fiat (USD). Reporting the crypto
+            // figures would make WebhookProcessor::deviationBeyondTolerance()
+            // compare USDT against USD, see a "currency mismatch" on every
+            // single successful deposit, and flip it from Succeeded to
+            // OnHold — silently holding every payment instead of crediting
+            // it. With both null the amount/currency check short-circuits and
+            // the ledger credits the invoiced fiat amount instead. The crypto
+            // figures are not lost: they are already carried in metadata
+            // above (`expected_amount`, `total_amount`).
+            amount: null,
+            currency: null,
         );
     }
 }

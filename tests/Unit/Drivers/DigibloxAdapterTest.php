@@ -192,7 +192,28 @@ describe('reconciliation', function () {
         expect($this->adapter->grossReceived([
             'amount' => '14948.711446005',
             'system_fee' => '75.119152995',
-        ]))->toBe('15023.830599000');
+        ]))->toBe('15023.830598999999736520');
+    });
+
+    it('does not lose dust on an 18-decimal asset at the wider scale', function () {
+        // At the old scale of 9, 0.1234567890123 truncates to 0.123456789 —
+        // real dust on an 18-decimal asset. At scale 18 it survives (modulo
+        // ordinary double-precision noise far past the 9th decimal).
+        expect($this->adapter->grossReceived([
+            'amount' => '0.1234567890123',
+            'system_fee' => '0',
+        ]))->toBe('0.123456789012300006');
+    });
+
+    it('normalises a scientific-notation fee instead of crashing bcmath', function () {
+        // A JSON number below 1e-5 (routine for a BTC/ETH fee) float-casts to
+        // scientific notation ("2.6E-6"), which bcadd() rejects as not a
+        // "well-formed numeric string" — an uncaught ValueError instead of
+        // the PaymentProcessingException this driver contracts to throw.
+        expect($this->adapter->grossReceived([
+            'amount' => '10',
+            'system_fee' => 2.6E-6,
+        ]))->toBe('10.000002600000000000');
     });
 });
 
@@ -213,11 +234,20 @@ describe('fromWebhook', function () {
             'to_address' => '0xto',
         ]);
 
+        // amount/currency are deliberately null: total_amount/currency here are
+        // crypto units (150 USDT), while the transaction they're applied to is
+        // invoiced in fiat (USD). Reporting them would make
+        // WebhookProcessor::deviationBeyondTolerance() see a currency
+        // mismatch on every successful deposit and hold it instead of
+        // crediting it — see the CRITICAL fix. The crypto figures still ride
+        // along in metadata.
         expect($update->status)->toBe(PaymentStatus::Succeeded)
-            ->and($update->amount)->toBe(150.0)
-            ->and($update->currency)->toBe('USDT')
+            ->and($update->amount)->toBeNull()
+            ->and($update->currency)->toBeNull()
             ->and($update->metadata['covered'])->toBeTrue()
             ->and($update->errorMessage)->toBeNull()
+            ->and($update->metadata['expected_amount'])->toBe('150.000000')
+            ->and($update->metadata['total_amount'])->toBe('150.000000')
             ->and($update->metadata['tx_hash'])->toBe('0xabc')
             ->and($update->metadata['network'])->toBe('TRON')
             ->and($update->metadata['from_address'])->toBe('0xfrom')
