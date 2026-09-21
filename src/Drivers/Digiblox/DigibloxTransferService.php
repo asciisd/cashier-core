@@ -176,6 +176,42 @@ class DigibloxTransferService
         );
     }
 
+    /**
+     * Poll a transfer.
+     *
+     * Note the path: creation posts to /gateway/api/v1/v3/transfers/centralized
+     * but the status route has no /v3 segment. That asymmetry is in the API,
+     * not a typo here.
+     *
+     * Because there is no idempotency key, this is also the only safe way to
+     * resolve an inconclusive create: poll before you retry, never retry blind.
+     *
+     * @return array{status: string, mapped: \Asciisd\CashierCore\Enums\PaymentStatus, tx_hash: ?string, raw: array<string, mixed>}
+     */
+    public function status(string $transferId): array
+    {
+        $response = PspHttp::idempotent()
+            ->withToken($this->client->authToken())
+            ->acceptJson()
+            ->get($this->baseUrl().'/gateway/api/v1/transfers/'.$transferId);
+
+        if (! $response->successful()) {
+            throw new PaymentProcessingException(
+                'Digiblox transfer lookup failed: '.trim($response->body()),
+            );
+        }
+
+        $transfer = (array) ($response->json('api_data.transfer') ?? []);
+        $status = (string) ($transfer['status'] ?? '');
+
+        return [
+            'status' => $status,
+            'mapped' => (new DigibloxAdapter)->mapTransferStatus($status),
+            'tx_hash' => isset($transfer['tx_hash']) ? (string) $transfer['tx_hash'] : null,
+            'raw' => $transfer,
+        ];
+    }
+
     private function baseUrl(): string
     {
         return rtrim((string) ($this->config['base_url'] ?? 'https://app.digiblox.io'), '/');

@@ -226,3 +226,67 @@ it('treats a 202 with a blank id as ambiguous: it must not be retried either', f
         ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
         ->toThrow(PaymentProcessingException::class, 'do NOT retry');
 });
+
+// Top-level, not inside the describe: a function declared in a closure is
+// redeclared globally each time the closure runs, which fatals on the second
+// pass.
+function fakeTransfer(string $status, ?string $txHash = null): array
+{
+    return [
+        'https://digiblox.test/gateway/api/v1/auth/login/jwt' => Http::response(['token' => 'jwt']),
+        'https://digiblox.test/gateway/api/v1/transfers/*' => Http::response([
+            'api_message' => 'TRANSFER_GET_SHOW_SUCCESS',
+            'api_data' => ['transfer' => [
+                'id' => 'Qk1ZbFZkN2R3Z1E9',
+                'status' => $status,
+                'amount' => '15.000000000000000000',
+                'system_fee' => 0.2,
+                'currency' => 'USDT',
+                'tx_hash' => $txHash,
+                'currency_decimals' => 18,
+            ]],
+        ]),
+    ];
+}
+
+describe('status', function () {
+    it('reads the transfer from the api_data envelope', function () {
+        Http::fake(fakeTransfer('CONFIRMED', '0xabc'));
+
+        $result = transferService()->status('Qk1ZbFZkN2R3Z1E9');
+
+        expect($result['status'])->toBe('CONFIRMED')
+            ->and($result['mapped'])->toBe(Asciisd\CashierCore\Enums\PaymentStatus::Succeeded)
+            ->and($result['tx_hash'])->toBe('0xabc');
+    });
+
+    it('uses the status path without the v3 segment that creation uses', function () {
+        Http::fake(fakeTransfer('QUEUED'));
+
+        transferService()->status('Qk1ZbFZkN2R3Z1E9');
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/gateway/api/v1/transfers/Qk1ZbFZkN2R3Z1E9')
+            && ! str_contains($request->url(), '/v3/transfers'));
+    });
+
+    it('keeps FINALIZE pending — confirmed on-chain is not yet terminal', function () {
+        Http::fake(fakeTransfer('FINALIZE'));
+
+        expect(transferService()->status('X')['mapped'])
+            ->toBe(Asciisd\CashierCore\Enums\PaymentStatus::Pending);
+    });
+
+    it('keeps an unlisted status pending rather than erroring out', function () {
+        Http::fake(fakeTransfer('SOME_NEW_STATE'));
+
+        expect(transferService()->status('X')['mapped'])
+            ->toBe(Asciisd\CashierCore\Enums\PaymentStatus::Pending);
+    });
+
+    it('reports a terminal failure for each documented failure state', function (string $status) {
+        Http::fake(fakeTransfer($status));
+
+        expect(transferService()->status('X')['mapped'])
+            ->toBe(Asciisd\CashierCore\Enums\PaymentStatus::Failed);
+    })->with(['FAILED', 'REJECTED', 'DROPPED', 'EXPIRED']);
+});
