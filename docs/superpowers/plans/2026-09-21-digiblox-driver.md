@@ -10,6 +10,33 @@
 
 **Spec:** `digiblox_docs/DIGIBLOX-INTEGRATION.md` — read §1–§6 and §10–§16 before starting. Every assertion below traces to a numbered section there.
 
+> ## ⚠️ Corrections applied during execution
+>
+> This plan was executed task-by-task with a review gate per task. Seven of its
+> code blocks turned out to be defective and were corrected in the implementation;
+> **the code in `src/Drivers/Digiblox/` is the source of truth, not the snippets
+> below.** Recorded here so a re-run does not reintroduce them:
+>
+> | Task | Defect in this plan | What shipped |
+> |---|---|---|
+> | 2 | `isCovered()` compared with `bccomp()` at bcmath's default scale of **0**, truncating to whole units, so 150.01 "covered" a 150.99 order. Its own test asserted a real settled deposit was covered, which the plan's float `>=` returned **false** for. | An explicit relative tolerance (`COVERAGE_TOLERANCE = 1e-9`), plus the boundary test the plan never had. |
+> | 2 | `bcadd` used with no `ext-bcmath` declaration. | `"ext-bcmath": "*"` added to `composer.json`. |
+> | 3 | `authToken()` cached but never locked, despite the spec mandating single-flight twice. Two workers on a cold cache both mint; the second invalidates the first, 401ing a live deposit. | `Cache::lock` with a re-read after acquiring, degrading to minting (never throwing) on timeout. |
+> | 5 | `refund()/capture()/authorize()/void()` threw `PaymentProcessingException`. Heropayment, Xoala and Payport all use `\BadMethodCallException`; the former means *a payment failed* and would surface "no refund API" to a customer as "your payment failed". | `\BadMethodCallException`. |
+> | 5 | `retrieve()` took `$rows[0]`. Rows are newest-**created** first, so a CONFIRMED payment followed by any later row reported `Pending` for settled money. The spec forbids assuming `result[0]` twice, in bold. | Aggregates across rows — any CONFIRMED wins — and puts the full row set in `processorResponse`. |
+> | 5 | `charge()` had no transport-failure handling, so a DNS/timeout `ConnectionException` escaped uncaught and unlogged. | Catches `HttpClientException`, logs, rethrows as `PaymentProcessingException`. |
+> | 7 | Tests used `route('webhooks.digiblox')`; the registered name is `cashier.webhooks.digiblox`. Would have failed forever. | Corrected; `config/cashier-core.php` sets `name_prefix` to `cashier.webhooks.`. |
+> | 7 | An absent `tx_hash` short-circuited the `ReplayGuard` call entirely, so such a delivery reprocessed on every retry. | Guard always called, falling back to the raw body as dedupe material. |
+> | 8 | The withdrawal cap **failed open**: a missing, null, empty, `'0'` or non-numeric `withdrawal_max_amount` all coerced to `0.0` and skipped the check, permitting any amount. | Fails closed — a missing or invalid cap is a configuration error; `0` blocks everything; comparison via `bccomp` on the string amount. |
+> | 8 | `is_numeric()` gates values that PHP 8.3+ bcmath rejects, so `' 100'` or `'2.5e1'` threw an uncaught `ValueError` instead of `PaymentProcessingException`. | `trim()` then a strict decimal pattern. |
+> | 9 | The transfer id was interpolated into the URL path unencoded. Digiblox ids are double base64, so the outer alphabet includes `/` — which splits the path. | `rawurlencode($transferId)`. |
+>
+> Two test-infrastructure traps also surfaced and are worth knowing before touching
+> these tests: Laravel's `Http::fake()` **merges** stubs rather than replacing them
+> (first match wins), so a second fake on the same URL never overrides the first;
+> and `Http::assertNothingSent()` is **vacuously true** unless `Http::fake()` ran in
+> that same test, because recording only starts then.
+
 ## Global Constraints
 
 Copied verbatim from the spec. Every task's requirements implicitly include this section.
