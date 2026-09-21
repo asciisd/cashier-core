@@ -1009,10 +1009,13 @@ it('returns null from retrieve when no deposit exists yet', function () {
 it('throws on every operation Digiblox has no endpoint for', function () {
     $provider = new DigibloxProvider(digibloxConfig());
 
-    expect(fn () => $provider->refund('DEP-1'))->toThrow(PaymentProcessingException::class)
-        ->and(fn () => $provider->capture('DEP-1'))->toThrow(PaymentProcessingException::class)
-        ->and(fn () => $provider->authorize([]))->toThrow(PaymentProcessingException::class)
-        ->and(fn () => $provider->void('DEP-1'))->toThrow(PaymentProcessingException::class);
+    // BadMethodCallException, not PaymentProcessingException: calling these is a
+    // programming error, not a payment that failed. Matches Heropayment, Xoala
+    // and Payport.
+    expect(fn () => $provider->refund('DEP-1'))->toThrow(BadMethodCallException::class)
+        ->and(fn () => $provider->capture('DEP-1'))->toThrow(BadMethodCallException::class)
+        ->and(fn () => $provider->authorize([]))->toThrow(BadMethodCallException::class)
+        ->and(fn () => $provider->void('DEP-1'))->toThrow(BadMethodCallException::class);
 });
 
 it('advertises only what it supports', function () {
@@ -1177,22 +1180,22 @@ class DigibloxProvider implements PaymentProcessorInterface, ProvidesWebhookTran
 
     public function refund(string $transactionId, ?float $amount = null): RefundResult
     {
-        throw new PaymentProcessingException('Digiblox has no refund endpoint; settle the excess manually.');
+        throw new \BadMethodCallException('Digiblox has no refund endpoint; settle the excess manually.');
     }
 
     public function capture(string $transactionId, ?float $amount = null): PaymentResult
     {
-        throw new PaymentProcessingException('Digiblox does not support capture.');
+        throw new \BadMethodCallException('Digiblox does not support capture.');
     }
 
     public function authorize(array $data): PaymentResult
     {
-        throw new PaymentProcessingException('Digiblox does not support authorize.');
+        throw new \BadMethodCallException('Digiblox does not support authorize.');
     }
 
     public function void(string $transactionId): PaymentResult
     {
-        throw new PaymentProcessingException('Digiblox does not support void.');
+        throw new \BadMethodCallException('Digiblox does not support void.');
     }
 
     public function getName(): string
