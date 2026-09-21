@@ -153,3 +153,15 @@ it('advertises only what it supports', function () {
         ->and($provider->supports('webhook'))->toBeTrue()
         ->and($provider->supports('refund'))->toBeFalse();
 });
+
+it('resolves through the connection registry', function () {
+    config()->set('cashier-core.connections.digiblox', array_merge(
+        digibloxConfig(),
+        ['driver' => 'digiblox'],
+    ));
+
+    $provider = app(Asciisd\CashierCore\Connections\ConnectionRegistry::class)->get('digiblox');
+
+    expect($provider)->toBeInstanceOf(DigibloxProvider::class)
+        ->and($provider->getName())->toBe('digiblox');
+});

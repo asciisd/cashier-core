@@ -28,6 +28,7 @@ class CashierCoreServiceProvider extends ServiceProvider
      */
     private const BUNDLED_DRIVERS = [
         'aps' => Drivers\Aps\ApsProvider::class,
+        'digiblox' => Drivers\Digiblox\DigibloxProvider::class,
         'jenapay' => Drivers\Jenapay\JenapayProvider::class,
         'heropayment' => Drivers\Heropayment\HeropaymentProvider::class,
         'payport' => Drivers\Payport\PayportProvider::class,

@@ -171,6 +171,37 @@ return [
     | no merchant, so the sender is identified by whose secure key verifies the
     | checksum.
     |
+    | Digiblox is a crypto payment widget that opens on a QR code. The deposit
+    | flow is guest checkout: no login, customer data goes directly on the
+    | transfer. Webhooks fire on every state transition — pending settlement,
+    | confirmed, failed — so a deposit row is created at charge time and
+    | updated by each webhook.
+    |
+    | 'digiblox' => [
+    |     'driver' => 'digiblox',
+    |     'base_url' => env('DIGIBLOX_BASE_URL'),   // defaults to https://app.digiblox.io
+    |     'username' => env('DIGIBLOX_USERNAME'),
+    |     'api_key' => env('DIGIBLOX_API_KEY'),
+    |     'api_secret' => env('DIGIBLOX_API_SECRET'),
+    |     // The encrypted merchant token Digiblox issued. A raw integer fails
+    |     // to decrypt and is rejected as `merchant_id must be a string`.
+    |     'merchant_id' => env('DIGIBLOX_MERCHANT_ID'),
+    |     // Pinning both lands the widget straight on the QR code. Omitting
+    |     // crypto_currency also drops network — network alone is rejected.
+    |     'crypto_currency' => env('DIGIBLOX_CRYPTO_CURRENCY', 'USDT'),
+    |     'network' => env('DIGIBLOX_NETWORK', 'TRON'),
+    |     'success_url' => env('DIGIBLOX_SUCCESS_URL'),
+    |     'fail_url' => env('DIGIBLOX_FAIL_URL'),
+    |     // Digiblox signs nothing. Authenticity is the static header you
+    |     // registered with them, replayed on every delivery.
+    |     'webhook_header_name' => env('DIGIBLOX_WEBHOOK_HEADER_NAME'),
+    |     'webhook_header_value' => env('DIGIBLOX_WEBHOOK_HEADER_VALUE'),
+    |     // Withdrawals move real money and there is no sandbox. Off until the
+    |     // flow is proven; every transfer is capped at withdrawal_max_amount.
+    |     'withdrawals_enabled' => env('DIGIBLOX_WITHDRAWALS_ENABLED', false),
+    |     'withdrawal_max_amount' => env('DIGIBLOX_WITHDRAWAL_MAX_AMOUNT', '100'),
+    | ],
+    |
     */
     'connections' => [],
 
