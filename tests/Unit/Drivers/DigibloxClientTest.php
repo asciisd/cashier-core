@@ -167,7 +167,9 @@ describe('searchDeposits', function () {
                 && $query['fO'] === 'EQ'
                 && $query['fT'] === 'S'
                 && $query['sB'] === 'created_at'
-                && $query['sD'] === 'desc';
+                && $query['sD'] === 'desc'
+                && $query['limit'] === '25'
+                && $query['offset'] === '0';
         });
     });
 
@@ -196,5 +198,20 @@ describe('searchDeposits', function () {
 
         expect($rows)->toHaveCount(2)
             ->and(array_column($rows, 'tx_hash'))->toBe(['0xaaa', '0xbbb']);
+    });
+
+    it('throws with error message on non-2xx response, not returning an empty array', function () {
+        Http::fake(array_merge(fakeLogin(), [
+            'https://digiblox.test/gateway/api/v1/v3/deposits/merchant*' => Http::response(
+                ['message' => 'Invalid merchant ID'],
+                401,
+            ),
+        ]));
+
+        expect(fn () => digibloxClient()->searchDeposits('DEP-1'))
+            ->toThrow(
+                Asciisd\CashierCore\Exceptions\PaymentProcessingException::class,
+                'Invalid merchant ID',
+            );
     });
 });
