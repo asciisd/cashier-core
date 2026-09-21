@@ -172,10 +172,14 @@ return [
     | checksum.
     |
     | Digiblox is a crypto payment widget that opens on a QR code. The deposit
-    | flow is guest checkout: no login, customer data goes directly on the
-    | transfer. Webhooks fire on every state transition — pending settlement,
-    | confirmed, failed — so a deposit row is created at charge time and
-    | updated by each webhook.
+    | flow is guest checkout: no login, and no customer data is required on
+    | the charge itself — the widget collects what it needs. (Customer PII,
+    | when known ahead of time, goes directly on the transfer/withdrawal
+    | request instead.) Digiblox fires exactly one webhook per delivery,
+    | carrying a reconciliation verdict on the amount (COMPLETED /
+    | PARTIALLY_PAID / OVERPAID) rather than a stream of lifecycle states — so
+    | a deposit row is created at charge time and updated once that verdict
+    | lands.
     |
     | 'digiblox' => [
     |     'driver' => 'digiblox',

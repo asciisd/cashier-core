@@ -194,13 +194,24 @@ it('carries our reference in user_note so treasury exports can be joined', funct
         && $request['user_note'] === 'WD-777');
 });
 
-it('truncates a note to the documented 255 characters', function () {
+it('truncates a note to the documented 255 characters, not bytes', function () {
     fakeDigiblox();
 
-    transferService()->create('25', '0xabc', 'ETHEREUM', 'USDC', str_repeat('x', 300));
+    // A multi-byte fixture: each "é" is 2 bytes in UTF-8. A byte-offset
+    // substr() would cut mid-character at byte 255 and hand Guzzle a
+    // malformed UTF-8 string; mb_substr() must cut on the 255th character
+    // instead, leaving the note well-formed.
+    transferService()->create('25', '0xabc', 'ETHEREUM', 'USDC', str_repeat('é', 300));
 
-    Http::assertSent(fn ($request) => str_ends_with($request->url(), '/transfers/centralized')
-        && strlen($request['user_note']) === 255);
+    Http::assertSent(function ($request) {
+        if (! str_ends_with($request->url(), '/transfers/centralized')) {
+            return false;
+        }
+
+        $note = $request['user_note'];
+
+        return mb_strlen($note) === 255 && mb_check_encoding($note, 'UTF-8');
+    });
 });
 
 it('treats a 4xx as a clean rejection: no transfer was created', function () {

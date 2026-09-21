@@ -120,8 +120,12 @@ class DigibloxTransferService
             'initial_rate' => self::INITIAL_RATE,
             'initial_rate_currency_id' => self::INITIAL_RATE_CURRENCY_ID,
             // The one free-text field on the API, and the only way to carry our
-            // own reference into Digiblox's treasury exports.
-            'user_note' => $note !== null ? substr($note, 0, self::MAX_NOTE_LENGTH) : null,
+            // own reference into Digiblox's treasury exports. mb_substr, not
+            // substr: a byte-offset cut can split a multi-byte character,
+            // leaving a note Guzzle then rejects with "Malformed UTF-8" — a
+            // TypeError, not the graceful PaymentProcessingException this
+            // class exists to guarantee.
+            'user_note' => $note !== null ? mb_substr($note, 0, self::MAX_NOTE_LENGTH) : null,
         ], fn ($value) => $value !== null);
 
         $response = PspHttp::client()
