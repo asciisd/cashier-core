@@ -186,6 +186,11 @@ class DigibloxTransferService
      * Because there is no idempotency key, this is also the only safe way to
      * resolve an inconclusive create: poll before you retry, never retry blind.
      *
+     * The id is percent-encoded for the URL path only — Digiblox ids are
+     * double base64 over the standard alphabet, which includes "/" and "+";
+     * an unescaped "/" would split the path and misroute the request. This
+     * is transport encoding, not a transformation of the id value.
+     *
      * @return array{status: string, mapped: \Asciisd\CashierCore\Enums\PaymentStatus, tx_hash: ?string, raw: array<string, mixed>}
      */
     public function status(string $transferId): array
@@ -193,8 +198,14 @@ class DigibloxTransferService
         $response = PspHttp::idempotent()
             ->withToken($this->client->authToken())
             ->acceptJson()
-            ->get($this->baseUrl().'/gateway/api/v1/transfers/'.$transferId);
+            ->get($this->baseUrl().'/gateway/api/v1/transfers/'.rawurlencode($transferId));
 
+        // Every non-2xx is treated uniformly, including 404. The spec says a
+        // 404 means the id does not exist OR is not visible to this caller —
+        // there is no spec-backed basis for reading that as "no transfer was
+        // created, safe to retry". Do not add a special case here: a false
+        // safe-retry signal on this path is exactly the double-send this
+        // class exists to prevent.
         if (! $response->successful()) {
             throw new PaymentProcessingException(
                 'Digiblox transfer lookup failed: '.trim($response->body()),

@@ -289,4 +289,74 @@ describe('status', function () {
         expect(transferService()->status('X')['mapped'])
             ->toBe(Asciisd\CashierCore\Enums\PaymentStatus::Failed);
     })->with(['FAILED', 'REJECTED', 'DROPPED', 'EXPIRED']);
+
+    it('percent-encodes the transfer id so a / or + in an opaque id cannot split the path', function () {
+        // Digiblox ids are double base64, using the standard alphabet
+        // (+ and / included). An unescaped / would split this into extra
+        // path segments and misroute the request — on the one method that
+        // exists to resolve an inconclusive create() safely.
+        $id = 'Qk1Z/bFZ+kN2R3Z1E9';
+
+        Http::fake([
+            'https://digiblox.test/gateway/api/v1/auth/login/jwt' => Http::response(['token' => 'jwt']),
+            'https://digiblox.test/gateway/api/v1/transfers/*' => Http::response([
+                'api_data' => ['transfer' => ['id' => $id, 'status' => 'QUEUED']],
+            ]),
+        ]);
+
+        transferService()->status($id);
+
+        Http::assertSent(fn ($request) => $request->url()
+            === 'https://digiblox.test/gateway/api/v1/transfers/'.rawurlencode($id));
+    });
+
+    it('throws for a 404, without treating "not found" as a safe-to-retry signal', function () {
+        // The spec says 404 means the id does not exist OR is not visible to
+        // this caller — there is no spec-backed basis for inferring "no
+        // transfer was created, safe to retry". Inventing that signal here
+        // is exactly the failure this class exists to prevent: a double
+        // send with no idempotency key to catch it. Keep 404 uniform with
+        // every other non-2xx.
+        Http::fake([
+            'https://digiblox.test/gateway/api/v1/auth/login/jwt' => Http::response(['token' => 'jwt']),
+            'https://digiblox.test/gateway/api/v1/transfers/*' => Http::response(['message' => 'Transfer not found'], 404),
+        ]);
+
+        expect(fn () => transferService()->status('X'))
+            ->toThrow(PaymentProcessingException::class, 'Transfer not found');
+    });
+
+    it('throws for a 500 lookup failure', function () {
+        Http::fake([
+            'https://digiblox.test/gateway/api/v1/auth/login/jwt' => Http::response(['token' => 'jwt']),
+            'https://digiblox.test/gateway/api/v1/transfers/*' => Http::response(['message' => 'Internal Server Error'], 500),
+        ]);
+
+        expect(fn () => transferService()->status('X'))
+            ->toThrow(PaymentProcessingException::class, 'Internal Server Error');
+    });
+
+    it('keeps status pending when api_data.transfer is missing from the envelope', function () {
+        Http::fake([
+            'https://digiblox.test/gateway/api/v1/auth/login/jwt' => Http::response(['token' => 'jwt']),
+            'https://digiblox.test/gateway/api/v1/transfers/*' => Http::response(['api_data' => []]),
+        ]);
+
+        $result = transferService()->status('X');
+
+        expect($result['mapped'])->toBe(Asciisd\CashierCore\Enums\PaymentStatus::Pending)
+            ->and($result['status'])->toBe('');
+    });
+
+    it('keeps status pending when api_data.transfer is a scalar, not an array', function () {
+        Http::fake([
+            'https://digiblox.test/gateway/api/v1/auth/login/jwt' => Http::response(['token' => 'jwt']),
+            'https://digiblox.test/gateway/api/v1/transfers/*' => Http::response(['api_data' => ['transfer' => 'oops']]),
+        ]);
+
+        $result = transferService()->status('X');
+
+        expect($result['mapped'])->toBe(Asciisd\CashierCore\Enums\PaymentStatus::Pending)
+            ->and($result['status'])->toBe('');
+    });
 });
