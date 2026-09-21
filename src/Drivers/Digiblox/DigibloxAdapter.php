@@ -61,4 +61,89 @@ class DigibloxAdapter
             default => PaymentStatus::Pending,
         };
     }
+
+    /**
+     * Digiblox rejects "150" and "150.5" with `fiat_amount must have 2
+     * decimals`. bcadd normalises binary-float artefacts (0.1 + 0.2) that
+     * number_format would carry through.
+     */
+    public function formatFiatAmount(int|float|string $amount): string
+    {
+        return number_format((float) $amount, 2, '.', '');
+    }
+
+    /**
+     * Assemble the POST /v3/payments/guests body.
+     *
+     * @param  array<string, mixed>  $data    charge data
+     * @param  array<string, mixed>  $config  the connection config
+     * @return array{payload: array<string, mixed>, notification: array<string, string>}
+     */
+    public function buildLinkPayload(array $data, array $config): array
+    {
+        $cryptoCurrency = $config['crypto_currency'] ?? null;
+
+        $payload = array_filter([
+            'external_id' => (string) $data['external_id'],
+            'merchant_id' => (string) ($config['merchant_id'] ?? ''),
+            'payment_method' => 'CRYPTO_DEPOSIT',
+            'fiat_currency' => strtoupper((string) ($data['currency'] ?? 'USD')),
+            'fiat_amount' => $this->formatFiatAmount($data['amount'] ?? 0),
+            'crypto_currency' => $cryptoCurrency,
+            // `network` without `crypto_currency` is rejected outright, so it
+            // rides along with the asset or not at all.
+            'network' => $cryptoCurrency ? ($config['network'] ?? null) : null,
+            // Flow B. Absent for an anonymous guest — the widget identifies
+            // the customer itself.
+            'username' => $data['guest_email'] ?? null,
+        ], fn ($value) => $value !== null && $value !== '');
+
+        return [
+            'payload' => $payload,
+            // Required even when empty: omitting it fails with
+            // `Invalid body - notification property is missing or invalid`.
+            'notification' => array_filter([
+                'success_url' => $config['success_url'] ?? null,
+                'fail_url' => $config['fail_url'] ?? null,
+            ], fn ($value) => $value !== null && $value !== ''),
+        ];
+    }
+
+    /**
+     * Was the order covered? Compares gross received against what was asked.
+     *
+     * `amount` is net of the platform fee — reconciling on it makes every
+     * correct payment look short by exactly the fee. A deposit with no
+     * recorded expectation is never covered: Digiblox deliberately refuses to
+     * claim COMPLETED when it cannot verify the amount, and so do we.
+     *
+     * @param  array<string, mixed>  $webhookPayload
+     */
+    public function isCovered(array $webhookPayload): bool
+    {
+        $expected = $webhookPayload['expected_amount'] ?? null;
+
+        if ($expected === null || (float) $expected <= 0.0) {
+            return false;
+        }
+
+        $total = (string) ($webhookPayload['total_amount'] ?? '0');
+
+        return bccomp($total, $expected) >= 0;
+    }
+
+    /**
+     * Gross received = credited amount + platform fee. Both arrive already
+     * decimal-converted, so Currency.decimals is reference only.
+     *
+     * @param  array<string, mixed>  $row
+     */
+    public function grossReceived(array $row): string
+    {
+        return bcadd(
+            (string) ($row['amount'] ?? '0'),
+            (string) ($row['system_fee'] ?? '0'),
+            9,
+        );
+    }
 }

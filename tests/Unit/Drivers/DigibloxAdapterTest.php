@@ -71,3 +71,118 @@ describe('mapTransferStatus', function () {
         }
     });
 });
+
+describe('formatFiatAmount', function () {
+    it('always emits exactly two decimals', function () {
+        expect($this->adapter->formatFiatAmount(150))->toBe('150.00');
+        expect($this->adapter->formatFiatAmount(150.5))->toBe('150.50');
+        expect($this->adapter->formatFiatAmount('7.5'))->toBe('7.50');
+        expect($this->adapter->formatFiatAmount(0.1 + 0.2))->toBe('0.30');
+    });
+});
+
+describe('buildLinkPayload', function () {
+    $config = [
+        'merchant_id' => 'bkE0RmNjbEhCUmc9',
+        'crypto_currency' => 'USDT',
+        'network' => 'TRON',
+        'success_url' => 'https://shop.test/ok',
+        'fail_url' => 'https://shop.test/no',
+    ];
+
+    it('builds a Flow A payload with a two-decimal string amount', function () use ($config) {
+        $payload = $this->adapter->buildLinkPayload(
+            ['external_id' => 'DEP-1', 'amount' => 150, 'currency' => 'USD'],
+            $config,
+        );
+
+        expect($payload['payload'])->toBe([
+            'external_id' => 'DEP-1',
+            'merchant_id' => 'bkE0RmNjbEhCUmc9',
+            'payment_method' => 'CRYPTO_DEPOSIT',
+            'fiat_currency' => 'USD',
+            'fiat_amount' => '150.00',
+            'crypto_currency' => 'USDT',
+            'network' => 'TRON',
+        ]);
+    });
+
+    it('always sends a notification object, empty when no urls are configured', function () {
+        $payload = $this->adapter->buildLinkPayload(
+            ['external_id' => 'DEP-1', 'amount' => 10, 'currency' => 'USD'],
+            ['merchant_id' => 'M1'],
+        );
+
+        expect($payload)->toHaveKey('notification')
+            ->and($payload['notification'])->toBe([]);
+    });
+
+    it('adds username only for Flow B', function () use ($config) {
+        $flowA = $this->adapter->buildLinkPayload(
+            ['external_id' => 'DEP-1', 'amount' => 10, 'currency' => 'USD'],
+            $config,
+        );
+        $flowB = $this->adapter->buildLinkPayload(
+            ['external_id' => 'DEP-2', 'amount' => 10, 'currency' => 'USD', 'guest_email' => 'a@b.test'],
+            $config,
+        );
+
+        expect($flowA['payload'])->not->toHaveKey('username')
+            ->and($flowB['payload']['username'])->toBe('a@b.test');
+    });
+
+    it('omits network when no crypto_currency is configured, since network alone is rejected', function () {
+        $payload = $this->adapter->buildLinkPayload(
+            ['external_id' => 'DEP-1', 'amount' => 10, 'currency' => 'USD'],
+            ['merchant_id' => 'M1', 'network' => 'TRON'],
+        );
+
+        expect($payload['payload'])->not->toHaveKey('network');
+    });
+});
+
+describe('reconciliation', function () {
+    it('reconciles on total_amount, not on the fee-netted amount', function () {
+        // Figures from a real settled deposit on this account.
+        // Reconciling on `amount` would make this look 75.12 USDT short.
+        $payload = [
+            'expected_amount' => '15023.830599907475',
+            'total_amount' => '15023.830598999999',
+            'amount' => '14948.711446005',
+            'status' => 'COMPLETED',
+        ];
+
+        expect($this->adapter->isCovered($payload))->toBeTrue();
+    });
+
+    it('does not treat a genuine underpayment as covered', function () {
+        expect($this->adapter->isCovered([
+            'expected_amount' => '150.000000',
+            'total_amount' => '120.000000',
+            'amount' => '119.760000',
+            'status' => 'PARTIALLY_PAID',
+        ]))->toBeFalse();
+    });
+
+    it('treats an overpayment as covered', function () {
+        expect($this->adapter->isCovered([
+            'expected_amount' => '150.000000',
+            'total_amount' => '175.500000',
+            'status' => 'OVERPAID',
+        ]))->toBeTrue();
+    });
+
+    it('is not covered when no expected amount was recorded', function () {
+        expect($this->adapter->isCovered([
+            'expected_amount' => null,
+            'total_amount' => '10.000000',
+        ]))->toBeFalse();
+    });
+
+    it('computes gross received as amount plus system_fee', function () {
+        expect($this->adapter->grossReceived([
+            'amount' => '14948.711446005',
+            'system_fee' => '75.119152995',
+        ]))->toBe('15023.830599000');
+    });
+});
