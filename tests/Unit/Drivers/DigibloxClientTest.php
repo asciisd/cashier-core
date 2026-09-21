@@ -95,3 +95,55 @@ it('forgets a cached token on demand', function () {
 
     Http::assertSentCount(4); // two logins, two creates
 });
+
+it('throws with error message when createPaymentLink receives a 400 with message as string', function () {
+    Http::fake(array_merge(fakeLogin(), [
+        'https://digiblox.test/gateway/api/v1/v3/payments/guests' => Http::response(
+            ['message' => 'external_id: DEP-1 is already used'],
+            400,
+        ),
+    ]));
+
+    expect(fn () => digibloxClient()->createPaymentLink(['payload' => ['external_id' => 'DEP-1'], 'notification' => []]))
+        ->toThrow(
+            Asciisd\CashierCore\Exceptions\PaymentProcessingException::class,
+            'external_id: DEP-1 is already used',
+        );
+});
+
+it('throws with all error messages when createPaymentLink receives a 400 with message as array', function () {
+    Http::fake(array_merge(fakeLogin(), [
+        'https://digiblox.test/gateway/api/v1/v3/payments/guests' => Http::response(
+            ['message' => ['external_id must be a string', 'fiat_amount must have 2 decimals']],
+            400,
+        ),
+    ]));
+
+    expect(fn () => digibloxClient()->createPaymentLink(['payload' => [], 'notification' => []]))
+        ->toThrow(
+            Asciisd\CashierCore\Exceptions\PaymentProcessingException::class,
+            'external_id must be a string; fiat_amount must have 2 decimals',
+        );
+});
+
+it('mints a token anyway when the refresh lock times out, rather than failing the payment', function () {
+    Cache::flush();
+    Http::fake(array_merge(fakeLogin('first-token'), fakeLogin('second-token'), [
+        'https://digiblox.test/gateway/api/v1/v3/payments/guests' => Http::response(['paymentLink' => 'u'], 201),
+    ]));
+
+    $client = digibloxClient();
+
+    // Acquire the lock to simulate a slow lock holder.
+    $lock = Cache::lock($client->tokenCacheKey().':refresh', 10);
+    $lock->get();
+
+    try {
+        // This call should time out waiting for the lock, then mint anyway.
+        $client->createPaymentLink(['payload' => ['external_id' => 'DEP-1'], 'notification' => []]);
+
+        Http::assertSent(fn ($request) => str_ends_with($request->url(), '/payments/guests'));
+    } finally {
+        $lock->release();
+    }
+});

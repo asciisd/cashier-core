@@ -6,6 +6,7 @@ namespace Asciisd\CashierCore\Drivers\Digiblox;
 
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Asciisd\CashierCore\Support\PspHttp;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
 
 class DigibloxClient
@@ -15,6 +16,17 @@ class DigibloxClient
      * our cache read and Digiblox's clock.
      */
     private const TOKEN_TTL_SECONDS = 3300;
+
+    /**
+     * How long a lock holder may hold the refresh lock before releasing it.
+     */
+    private const LOCK_HOLD_SECONDS = 10;
+
+    /**
+     * How long to wait for a lock before timing out and minting anyway.
+     * Kept short so tests can exercise the timeout path without slowing the suite.
+     */
+    private const LOCK_WAIT_SECONDS = 1;
 
     /**
      * The JWT-authenticated path form. The sibling `/gateway/api/v3/…` is the
@@ -86,6 +98,13 @@ class DigibloxClient
      * Public because DigibloxTransferService reuses it. It must never mint its
      * own token: a new token invalidates the previous one for this merchant,
      * so two token-minting call sites would log each other out.
+     *
+     * Implements single-flight caching: the fast path returns a cached token
+     * without taking a lock. On a miss, one worker acquires a refresh lock,
+     * re-checks the cache (the lock holder before us may have just written),
+     * and mints if still a miss. If a lock times out, the worker mints anyway
+     * rather than failing a live payment — a wedged lock should never take down
+     * a customer deposit.
      */
     public function authToken(): string
     {
@@ -95,6 +114,39 @@ class DigibloxClient
             return $cached;
         }
 
+        $lock = Cache::lock($this->tokenCacheKey().':refresh', self::LOCK_HOLD_SECONDS);
+
+        try {
+            $lock->block(self::LOCK_WAIT_SECONDS);
+        } catch (LockTimeoutException) {
+            // The lock holder is wedged or slow. Rather than failing a live
+            // payment, mint a token anyway — a timeout is rare, and a failed
+            // deposit is worse than a transient duplicate mint.
+            return $this->mintToken();
+        }
+
+        try {
+            // Re-read the cache: the lock holder before us has probably written
+            // a token. This is the whole point of single-flight refresh.
+            $cached = Cache::get($this->tokenCacheKey());
+
+            if (is_string($cached) && $cached !== '') {
+                return $cached;
+            }
+
+            return $this->mintToken();
+        } finally {
+            $lock->release();
+        }
+    }
+
+    /**
+     * Mint a new JWT token and cache it.
+     *
+     * @throws PaymentProcessingException on auth failure or invalid response
+     */
+    private function mintToken(): string
+    {
         $response = PspHttp::idempotent()
             ->acceptJson()
             ->post($this->baseUrl.'/gateway/api/v1/auth/login/jwt', [
