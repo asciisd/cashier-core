@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Asciisd\CashierCore\Http\Controllers\Webhooks\ApsWebhookController;
+use Asciisd\CashierCore\Http\Controllers\Webhooks\DigibloxWebhookController;
 use Asciisd\CashierCore\Http\Controllers\Webhooks\HeropaymentWebhookController;
 use Asciisd\CashierCore\Http\Controllers\Webhooks\JenapayWebhookController;
 use Asciisd\CashierCore\Http\Controllers\Webhooks\MyfatoorahWebhookController;
@@ -24,6 +25,7 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::post('/aps', ApsWebhookController::class)->name('aps');
+Route::post('/digiblox', DigibloxWebhookController::class)->name('digiblox');
 Route::post('/jenapay', JenapayWebhookController::class)->name('jenapay');
 Route::post('/heropayment', HeropaymentWebhookController::class)->name('heropayment');
 Route::post('/payport', PayportWebhookController::class)->name('payport');
