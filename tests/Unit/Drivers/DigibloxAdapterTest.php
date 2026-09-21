@@ -179,6 +179,15 @@ describe('reconciliation', function () {
         ]))->toBeFalse();
     });
 
+    it('does not treat a shortfall inside the same whole unit as covered', function () {
+        // Guards the tolerance against a scale-0 bcmath comparison, which
+        // truncates both sides to 150 and calls this covered.
+        expect($this->adapter->isCovered([
+            'expected_amount' => '150.99',
+            'total_amount' => '150.01',
+        ]))->toBeFalse();
+    });
+
     it('computes gross received as amount plus system_fee', function () {
         expect($this->adapter->grossReceived([
             'amount' => '14948.711446005',

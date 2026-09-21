@@ -332,6 +332,15 @@ describe('reconciliation', function () {
         expect($this->adapter->isCovered($payload))->toBeTrue();
     });
 
+    it('does not treat a shortfall inside the same whole unit as covered', function () {
+        // Guards the tolerance against a scale-0 bcmath comparison, which
+        // truncates both sides to 150 and calls this covered.
+        expect($this->adapter->isCovered([
+            'expected_amount' => '150.99',
+            'total_amount' => '150.01',
+        ]))->toBeFalse();
+    });
+
     it('does not treat a genuine underpayment as covered', function () {
         expect($this->adapter->isCovered([
             'expected_amount' => '150.000000',
@@ -440,8 +449,23 @@ Add to `DigibloxAdapter`:
             return false;
         }
 
-        return (float) ($webhookPayload['total_amount'] ?? 0) >= (float) $expected;
+        // A real settled deposit on this account arrived
+        // 9.07e-7 short of expected -- 6.04e-11 relative -- and Digiblox still
+        // booked it Completed. That is decimal representation noise, not an
+        // underpayment, so an exact >= would misreport a fully paid order.
+        // The tolerance is relative and explicit; never rely on bccomp()'s
+        // default scale, which is 0 and truncates to whole units.
+        $floor = (float) $expected * (1.0 - self::COVERAGE_TOLERANCE);
+
+        return (float) ($webhookPayload['total_amount'] ?? 0) >= $floor;
     }
+
+    /**
+     * Relative tolerance for coverage. Absorbs decimal representation noise
+     * without masking a genuine shortfall: at 1e-9 a 150.99 order is not
+     * covered by 150.01, but the real 15023.8306 row above is.
+     */
+    private const COVERAGE_TOLERANCE = 0.000000001;
 
     /**
      * Gross received = credited amount + platform fee. Both arrive already

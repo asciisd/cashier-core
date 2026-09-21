@@ -19,6 +19,13 @@ use Asciisd\CashierCore\Enums\PaymentStatus;
 class DigibloxAdapter
 {
     /**
+     * Relative tolerance for coverage. Absorbs decimal representation noise
+     * without masking a genuine shortfall: at 1e-9 a 150.99 order is not
+     * covered by 150.01, but the real 15023.8306 row is.
+     */
+    private const COVERAGE_TOLERANCE = 0.000000001;
+
+    /**
      * Deposit lifecycle (GET /v3/deposits/merchant).
      *
      * Deliberately a three-way branch rather than an exhaustive match: any
@@ -64,8 +71,7 @@ class DigibloxAdapter
 
     /**
      * Digiblox rejects "150" and "150.5" with `fiat_amount must have 2
-     * decimals`. bcadd normalises binary-float artefacts (0.1 + 0.2) that
-     * number_format would carry through.
+     * decimals`. number_format normalises binary-float artefacts (0.1 + 0.2).
      */
     public function formatFiatAmount(int|float|string $amount): string
     {
@@ -121,15 +127,21 @@ class DigibloxAdapter
      */
     public function isCovered(array $webhookPayload): bool
     {
-        $expected = $webhookPayload['expected_amount'] ?? null;
+        $expected = (string) ($webhookPayload['expected_amount'] ?? '');
 
-        if ($expected === null || (float) $expected <= 0.0) {
+        if ($expected === '' || (float) $expected <= 0.0) {
             return false;
         }
 
-        $total = (string) ($webhookPayload['total_amount'] ?? '0');
+        // A real settled deposit on this account arrived
+        // 9.07e-7 short of expected -- 6.04e-11 relative -- and Digiblox still
+        // booked it Completed. That is decimal representation noise, not an
+        // underpayment, so an exact >= would misreport a fully paid order.
+        // The tolerance is relative and explicit; never rely on bccomp()'s
+        // default scale, which is 0 and truncates to whole units.
+        $floor = (float) $expected * (1.0 - self::COVERAGE_TOLERANCE);
 
-        return bccomp($total, $expected) >= 0;
+        return (float) ($webhookPayload['total_amount'] ?? 0) >= $floor;
     }
 
     /**
