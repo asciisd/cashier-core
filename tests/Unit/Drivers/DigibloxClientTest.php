@@ -215,3 +215,67 @@ describe('searchDeposits', function () {
             );
     });
 });
+
+describe('guest flow', function () {
+    it('reports a missing guest as a normal 200, not an error', function () {
+        Http::fake(array_merge(fakeLogin(), [
+            'https://digiblox.test/gateway/api/v1/v3/auth/check-guest-exists' => Http::response(
+                ['exists' => false, 'id' => null],
+            ),
+        ]));
+
+        expect(digibloxClient()->checkGuestExists('nobody@test.dev'))
+            ->toBe(['exists' => false, 'id' => null]);
+    });
+
+    it('returns the permanent user id for an existing guest', function () {
+        Http::fake(array_merge(fakeLogin(), [
+            'https://digiblox.test/gateway/api/v1/v3/auth/check-guest-exists' => Http::response(
+                ['exists' => true, 'id' => 'V0FrTk5FR3NUeE9wL2lqcE9Rc2h2Zz09'],
+            ),
+        ]));
+
+        expect(digibloxClient()->checkGuestExists('known@test.dev'))
+            ->toBe(['exists' => true, 'id' => 'V0FrTk5FR3NUeE9wL2lqcE9Rc2h2Zz09']);
+    });
+
+    it('registers a guest with the email beside the pii object, not inside it', function () {
+        Http::fake(array_merge(fakeLogin(), [
+            'https://digiblox.test/gateway/api/v1/v3/auth/create-guest-with-pii' => Http::response(
+                ['message' => 'user create/updated successfully'],
+            ),
+        ]));
+
+        $created = digibloxClient()->createGuestWithPii('new@test.dev', [
+            'firstName' => 'John',
+            'lastName' => 'Doe',
+            'dob' => '1990-01-01',
+            'phone' => '+15551234567',
+            'address' => '123 Main Street',
+            'city' => 'New York',
+            'country' => 'USA',
+            'zipCode' => '10001',
+        ]);
+
+        expect($created)->toBeTrue();
+
+        Http::assertSent(fn ($request) => str_ends_with($request->url(), '/auth/create-guest-with-pii')
+            && $request['email'] === 'new@test.dev'
+            && $request['pii']['country'] === 'USA'
+            && ! isset($request['pii']['email']));
+    });
+
+    it('surfaces every entry when field validation returns an array of messages', function () {
+        Http::fake(array_merge(fakeLogin(), [
+            'https://digiblox.test/gateway/api/v1/v3/auth/create-guest-with-pii' => Http::response([
+                'message' => ['firstName string is required', 'lastName string is required'],
+            ], 400),
+        ]));
+
+        expect(fn () => digibloxClient()->createGuestWithPii('bad@test.dev', []))
+            ->toThrow(
+                Asciisd\CashierCore\Exceptions\PaymentProcessingException::class,
+                'firstName string is required; lastName string is required',
+            );
+    });
+});

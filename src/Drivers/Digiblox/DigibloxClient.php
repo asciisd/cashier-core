@@ -222,4 +222,62 @@ class DigibloxClient
 
         return array_values((array) ($response->json('result') ?? []));
     }
+
+    /**
+     * Look a guest up by email.
+     *
+     * There is deliberately no 404: a customer we have never seen is a normal
+     * 200 with exists:false. Note this answers true only for accounts whose
+     * type is `guest` — a full Digiblox account with that email also returns
+     * false, and registering it as a guest is rejected later.
+     *
+     * @return array{exists: bool, id: ?string}
+     */
+    public function checkGuestExists(string $email): array
+    {
+        $response = PspHttp::idempotent()
+            ->withToken($this->authToken())
+            ->acceptJson()
+            ->post($this->baseUrl.self::API_PREFIX.'/auth/check-guest-exists', ['username' => $email]);
+
+        if (! $response->successful()) {
+            throw new PaymentProcessingException(
+                'Digiblox guest lookup failed: '.$this->errorMessage($response->json(), $response->body()),
+            );
+        }
+
+        $id = $response->json('id');
+
+        return [
+            'exists' => (bool) $response->json('exists'),
+            'id' => $id === null ? null : (string) $id,
+        ];
+    }
+
+    /**
+     * Pre-register a guest. Safe to re-send: calling it again for an existing
+     * guest updates the PII rather than failing, so there is no "already
+     * exists" case to code around. It does not return the user_id.
+     *
+     * @param  array<string, string>  $pii
+     */
+    public function createGuestWithPii(string $email, array $pii): bool
+    {
+        $response = PspHttp::client()
+            ->withToken($this->authToken())
+            ->acceptJson()
+            // `email` sits beside `pii`, not inside it.
+            ->post($this->baseUrl.self::API_PREFIX.'/auth/create-guest-with-pii', [
+                'email' => $email,
+                'pii' => $pii,
+            ]);
+
+        if (! $response->successful()) {
+            throw new PaymentProcessingException(
+                'Digiblox guest registration failed: '.$this->errorMessage($response->json(), $response->body()),
+            );
+        }
+
+        return true;
+    }
 }
