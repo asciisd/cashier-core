@@ -81,3 +81,31 @@ it('accepts all three verdicts', function (string $status) {
 
     Queue::assertPushed(ProcessPaymentProviderWebhook::class);
 })->with(['COMPLETED', 'PARTIALLY_PAID', 'OVERPAID']);
+
+it('deduplicates a delivery with no tx_hash instead of reprocessing it forever', function () {
+    $headers = ['X-Digiblox-Token' => 'shared-secret'];
+    $payload = digibloxWebhookPayload();
+    unset($payload['tx_hash']);
+
+    $this->postJson(route('cashier.webhooks.digiblox'), $payload, $headers)->assertOk();
+    // Identical malformed delivery, retried — must dedupe on the raw body,
+    // not bypass the guard and reprocess indefinitely.
+    $this->postJson(route('cashier.webhooks.digiblox'), $payload, $headers)->assertOk();
+
+    Queue::assertPushed(ProcessPaymentProviderWebhook::class, 1);
+});
+
+it('accepts a delivery with no header when the connection has none configured', function () {
+    config()->set('cashier-core.connections.digiblox', [
+        'driver' => 'digiblox',
+        'base_url' => 'https://digiblox.test',
+        'username' => 'merchant_alpha',
+        'api_key' => 'key',
+        'api_secret' => 'secret',
+        'merchant_id' => 'M1',
+    ]);
+
+    $this->postJson(route('cashier.webhooks.digiblox'), digibloxWebhookPayload())->assertOk();
+
+    Queue::assertPushed(ProcessPaymentProviderWebhook::class);
+});

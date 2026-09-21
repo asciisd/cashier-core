@@ -57,10 +57,15 @@ class DigibloxWebhookController extends Controller
         // second genuine payment.
         $txHash = (string) ($payload['tx_hash'] ?? '');
 
+        // A delivery without tx_hash is malformed, but it must still dedupe
+        // on retry rather than reprocess forever: fall back to the raw body
+        // as the dedupe material so the guard is always consulted.
+        $dedupeMaterial = $txHash !== '' ? $txHash : $request->getContent();
+
         // Digiblox provides no signature, so that slot in the replay digest
-        // is left empty; the digest still stays unique per tx_hash via the
-        // raw-body argument.
-        if ($txHash !== '' && ! $replayGuard->claim(self::DRIVER, $txHash, '', self::DRIVER)) {
+        // is left empty; the digest still stays unique per tx_hash (or the
+        // raw body, when there is no hash) via the raw-body argument.
+        if (! $replayGuard->claim(self::DRIVER, $dedupeMaterial, '', self::DRIVER)) {
             // Duplicate delivery — ACK so Digiblox stops retrying.
             return response()->json(['status' => 'ok']);
         }
