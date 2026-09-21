@@ -90,10 +90,13 @@ it('returns null from retrieve when no deposit exists yet', function () {
 it('throws on every operation Digiblox has no endpoint for', function () {
     $provider = new DigibloxProvider(digibloxConfig());
 
-    expect(fn () => $provider->refund('DEP-1'))->toThrow(PaymentProcessingException::class)
-        ->and(fn () => $provider->capture('DEP-1'))->toThrow(PaymentProcessingException::class)
-        ->and(fn () => $provider->authorize([]))->toThrow(PaymentProcessingException::class)
-        ->and(fn () => $provider->void('DEP-1'))->toThrow(PaymentProcessingException::class);
+    // BadMethodCallException, not PaymentProcessingException: calling these is a
+    // programming error, not a payment that failed. Matches Heropayment, Xoala
+    // and Payport.
+    expect(fn () => $provider->refund('DEP-1'))->toThrow(BadMethodCallException::class)
+        ->and(fn () => $provider->capture('DEP-1'))->toThrow(BadMethodCallException::class)
+        ->and(fn () => $provider->authorize([]))->toThrow(BadMethodCallException::class)
+        ->and(fn () => $provider->void('DEP-1'))->toThrow(BadMethodCallException::class);
 });
 
 it('advertises only what it supports', function () {

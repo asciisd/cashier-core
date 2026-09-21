@@ -142,22 +142,22 @@ class DigibloxProvider implements PaymentProcessorInterface, ProvidesWebhookTran
 
     public function refund(string $transactionId, ?float $amount = null): RefundResult
     {
-        throw new PaymentProcessingException('Digiblox has no refund endpoint; settle the excess manually.');
+        throw new \BadMethodCallException('Digiblox has no refund endpoint; settle the excess manually.');
     }
 
     public function capture(string $transactionId, ?float $amount = null): PaymentResult
     {
-        throw new PaymentProcessingException('Digiblox does not support capture.');
+        throw new \BadMethodCallException('Digiblox does not support capture.');
     }
 
     public function authorize(array $data): PaymentResult
     {
-        throw new PaymentProcessingException('Digiblox does not support authorize.');
+        throw new \BadMethodCallException('Digiblox does not support authorize.');
     }
 
     public function void(string $transactionId): PaymentResult
     {
-        throw new PaymentProcessingException('Digiblox does not support void.');
+        throw new \BadMethodCallException('Digiblox does not support void.');
     }
 
     public function getName(): string
