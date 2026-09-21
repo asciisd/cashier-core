@@ -23,8 +23,12 @@ function transferService(array $overrides = []): DigibloxTransferService
 /**
  * Fakes both endpoints. Http::fake() stubs match in registration order — first
  * match wins — so a test that wants a non-default transfer response must be
- * the only place that registers the transfer stub. Tests exercising a guard
- * (which never reach the HTTP layer) don't need this at all.
+ * the only place that registers the transfer stub. Guard tests (which must
+ * never reach the HTTP layer) don't call this helper, but they still need a
+ * bare Http::fake() of their own: Laravel only records outbound requests once
+ * fake() has switched recording on for that test, so without it
+ * Http::assertNothingSent() cannot fail no matter what the code does. A fake
+ * with no stubs is enough — no request should ever match, or be sent, at all.
  */
 function fakeDigiblox(int $transferStatus = 202, array $transferBody = ['id' => 'Qk1ZbFZkN2R3Z1E9', 'status' => 'QUEUED']): void
 {
@@ -39,6 +43,8 @@ beforeEach(function () {
 });
 
 it('refuses to send while withdrawals are disabled', function () {
+    Http::fake();
+
     expect(fn () => transferService(['withdrawals_enabled' => false])
         ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
         ->toThrow(PaymentProcessingException::class, 'disabled');
@@ -47,6 +53,8 @@ it('refuses to send while withdrawals are disabled', function () {
 });
 
 it('refuses an amount above the configured cap', function () {
+    Http::fake();
+
     expect(fn () => transferService()
         ->create('500', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
         ->toThrow(PaymentProcessingException::class, 'exceeds');
@@ -55,6 +63,8 @@ it('refuses an amount above the configured cap', function () {
 });
 
 it('refuses a malformed amount, because the API does not', function () {
+    Http::fake();
+
     foreach (['abc', '', '0', '-5'] as $amount) {
         expect(fn () => transferService()
             ->create($amount, '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
@@ -65,6 +75,8 @@ it('refuses a malformed amount, because the API does not', function () {
 });
 
 it('refuses an empty destination address, because the API does not validate it', function () {
+    Http::fake();
+
     expect(fn () => transferService()->create('25', '  ', 'ETHEREUM', 'USDC'))
         ->toThrow(PaymentProcessingException::class, 'address');
 
@@ -72,6 +84,8 @@ it('refuses an empty destination address, because the API does not validate it',
 });
 
 it('fails closed when withdrawal_max_amount is missing', function () {
+    Http::fake();
+
     expect(fn () => transferService(['withdrawal_max_amount' => null])
         ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
         ->toThrow(PaymentProcessingException::class);
@@ -80,6 +94,8 @@ it('fails closed when withdrawal_max_amount is missing', function () {
 });
 
 it('fails closed when withdrawal_max_amount is an empty string', function () {
+    Http::fake();
+
     expect(fn () => transferService(['withdrawal_max_amount' => ''])
         ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
         ->toThrow(PaymentProcessingException::class);
@@ -88,6 +104,8 @@ it('fails closed when withdrawal_max_amount is an empty string', function () {
 });
 
 it('fails closed when withdrawal_max_amount is zero', function () {
+    Http::fake();
+
     expect(fn () => transferService(['withdrawal_max_amount' => '0'])
         ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
         ->toThrow(PaymentProcessingException::class);
@@ -96,11 +114,53 @@ it('fails closed when withdrawal_max_amount is zero', function () {
 });
 
 it('fails closed when withdrawal_max_amount is non-numeric', function () {
+    Http::fake();
+
     expect(fn () => transferService(['withdrawal_max_amount' => 'not-a-number'])
         ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
         ->toThrow(PaymentProcessingException::class);
 
     Http::assertNothingSent();
+});
+
+it('refuses a scientific-notation amount, which is_numeric() accepts but bcmath cannot compare', function () {
+    Http::fake();
+
+    expect(fn () => transferService()
+        ->create('2.5e1', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
+        ->toThrow(PaymentProcessingException::class);
+
+    Http::assertNothingSent();
+});
+
+it('refuses a scientific-notation cap, which is_numeric() accepts but bcmath cannot compare', function () {
+    Http::fake();
+
+    expect(fn () => transferService(['withdrawal_max_amount' => '2.5e1'])
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
+        ->toThrow(PaymentProcessingException::class);
+
+    Http::assertNothingSent();
+});
+
+it('accepts a whitespace-padded amount, trimming it before validation and before sending', function () {
+    fakeDigiblox();
+
+    $result = transferService()->create(' 25 ', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC');
+
+    expect($result['id'])->toBe('Qk1ZbFZkN2R3Z1E9');
+
+    Http::assertSent(fn ($request) => str_ends_with($request->url(), '/transfers/centralized')
+        && $request['amount'] === '25');
+});
+
+it('accepts a whitespace-padded cap', function () {
+    fakeDigiblox();
+
+    $result = transferService(['withdrawal_max_amount' => ' 100 '])
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC');
+
+    expect($result['id'])->toBe('Qk1ZbFZkN2R3Z1E9');
 });
 
 it('accepts a 202 and returns the opaque transfer id', function () {

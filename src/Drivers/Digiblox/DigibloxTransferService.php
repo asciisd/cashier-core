@@ -30,6 +30,15 @@ class DigibloxTransferService
 
     private const MAX_NOTE_LENGTH = 255;
 
+    /**
+     * A strict decimal-string pattern, stricter than is_numeric(). PHP 8.3+
+     * bcmath requires a "well-formed numeric string" for bccomp(); is_numeric()
+     * accepts whitespace-padding and scientific notation ("2.5e1"), both of
+     * which crash bccomp() with an uncaught ValueError. Applied only after
+     * trimming, so surrounding whitespace is not itself a rejection reason.
+     */
+    private const NUMERIC_PATTERN = '/^-?\d+(\.\d+)?$/';
+
     private DigibloxClient $client;
 
     /** @param array<string, mixed> $config */
@@ -55,8 +64,17 @@ class DigibloxTransferService
         }
 
         // The API accepts non-numeric and malformed amount strings without
-        // complaint, so the guard has to live here.
-        if (! is_numeric($amount) || (float) $amount <= 0) {
+        // complaint, so the guard has to live here. Trim first — whitespace
+        // carries no meaning, and rejecting a stray space (an ordinary
+        // config/.env typo) would turn a typo into an outage. Then require a
+        // strict decimal pattern rather than is_numeric(): PHP 8.3+ bcmath
+        // demands a "well-formed numeric string", which is stricter than
+        // is_numeric() — " 100" and "2.5e1" both pass is_numeric() but crash
+        // bccomp() below with an uncaught ValueError instead of the graceful
+        // PaymentProcessingException this whole class exists to guarantee.
+        $amount = trim($amount);
+
+        if (! preg_match(self::NUMERIC_PATTERN, $amount) || (float) $amount <= 0) {
             throw new PaymentProcessingException('Digiblox withdrawal amount must be a positive number.');
         }
 
@@ -66,14 +84,13 @@ class DigibloxTransferService
         // against production credentials with no sandbox. Any of those is a
         // configuration error: refuse to send rather than guess.
         $capRaw = $this->config['withdrawal_max_amount'] ?? null;
+        $cap = $capRaw === null ? '' : trim((string) $capRaw);
 
-        if ($capRaw === null || $capRaw === '' || ! is_numeric($capRaw)) {
+        if ($cap === '' || ! preg_match(self::NUMERIC_PATTERN, $cap)) {
             throw new PaymentProcessingException(
                 'Digiblox withdrawals are enabled but no valid withdrawal_max_amount is configured. Refusing to send.',
             );
         }
-
-        $cap = (string) $capRaw;
 
         // A cap of zero blocks everything — it is not "no cap".
         if (bccomp($cap, '0', 18) <= 0) {
