@@ -188,4 +188,38 @@ class DigibloxClient
             default => trim($fallback),
         };
     }
+
+    /**
+     * Reconciliation: every deposit recorded against one of our payment links.
+     *
+     * Only `fV` ever varies — the rest of the query string is a constant. An
+     * empty result is the correct "nothing yet" signal, not an error, so it
+     * returns [] rather than throwing.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function searchDeposits(string $externalId, int $limit = 25, int $offset = 0): array
+    {
+        $response = PspHttp::idempotent()
+            ->withToken($this->authToken())
+            ->acceptJson()
+            ->get($this->baseUrl.self::API_PREFIX.'/deposits/merchant', [
+                'limit' => $limit,
+                'offset' => $offset,
+                'sB' => 'created_at',
+                'sD' => 'desc',
+                'fB' => 'external_transaction_id',
+                'fV' => $externalId,
+                'fO' => 'EQ',
+                'fT' => 'S',
+            ]);
+
+        if (! $response->successful()) {
+            throw new PaymentProcessingException(
+                'Digiblox deposit lookup failed: '.$this->errorMessage($response->json(), $response->body()),
+            );
+        }
+
+        return array_values((array) ($response->json('result') ?? []));
+    }
 }

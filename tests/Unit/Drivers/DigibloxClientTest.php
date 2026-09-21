@@ -147,3 +147,54 @@ it('mints a token anyway when the refresh lock times out, rather than failing th
         $lock->release();
     }
 });
+
+describe('searchDeposits', function () {
+    it('sends the fixed query string, varying only fV', function () {
+        Http::fake(array_merge(fakeLogin(), [
+            'https://digiblox.test/gateway/api/v1/v3/deposits/merchant*' => Http::response(
+                ['totalItems' => 0, 'result' => []],
+            ),
+        ]));
+
+        digibloxClient()->searchDeposits('DEP-42');
+
+        Http::assertSent(function ($request) {
+            parse_str(parse_url($request->url(), PHP_URL_QUERY) ?? '', $query);
+
+            return str_contains($request->url(), '/v3/deposits/merchant')
+                && $query['fV'] === 'DEP-42'
+                && $query['fB'] === 'external_transaction_id'
+                && $query['fO'] === 'EQ'
+                && $query['fT'] === 'S'
+                && $query['sB'] === 'created_at'
+                && $query['sD'] === 'desc';
+        });
+    });
+
+    it('returns an empty list for totalItems 0 without treating it as an error', function () {
+        Http::fake(array_merge(fakeLogin(), [
+            'https://digiblox.test/gateway/api/v1/v3/deposits/merchant*' => Http::response(
+                ['totalItems' => 0, 'result' => []],
+            ),
+        ]));
+
+        expect(digibloxClient()->searchDeposits('DEP-unknown'))->toBe([]);
+    });
+
+    it('returns every row, not just the first — one link can take several payments', function () {
+        Http::fake(array_merge(fakeLogin(), [
+            'https://digiblox.test/gateway/api/v1/v3/deposits/merchant*' => Http::response([
+                'totalItems' => 2,
+                'result' => [
+                    ['external_transaction_id' => 'DEP-1', 'status' => 'CONFIRMED', 'tx_hash' => '0xaaa'],
+                    ['external_transaction_id' => 'DEP-1', 'status' => 'CONFIRMED', 'tx_hash' => '0xbbb'],
+                ],
+            ]),
+        ]));
+
+        $rows = digibloxClient()->searchDeposits('DEP-1');
+
+        expect($rows)->toHaveCount(2)
+            ->and(array_column($rows, 'tx_hash'))->toBe(['0xaaa', '0xbbb']);
+    });
+});
