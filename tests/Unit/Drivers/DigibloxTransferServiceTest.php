@@ -20,15 +20,22 @@ function transferService(array $overrides = []): DigibloxTransferService
     ], $overrides));
 }
 
-beforeEach(function () {
-    Cache::flush();
-
+/**
+ * Fakes both endpoints. Http::fake() stubs match in registration order — first
+ * match wins — so a test that wants a non-default transfer response must be
+ * the only place that registers the transfer stub. Tests exercising a guard
+ * (which never reach the HTTP layer) don't need this at all.
+ */
+function fakeDigiblox(int $transferStatus = 202, array $transferBody = ['id' => 'Qk1ZbFZkN2R3Z1E9', 'status' => 'QUEUED']): void
+{
     Http::fake([
         'https://digiblox.test/gateway/api/v1/auth/login/jwt' => Http::response(['token' => 'jwt']),
-        'https://digiblox.test/gateway/api/v1/v3/transfers/centralized' => Http::response(
-            ['id' => 'Qk1ZbFZkN2R3Z1E9', 'status' => 'QUEUED'], 202,
-        ),
+        'https://digiblox.test/gateway/api/v1/v3/transfers/centralized' => Http::response($transferBody, $transferStatus),
     ]);
+}
+
+beforeEach(function () {
+    Cache::flush();
 });
 
 it('refuses to send while withdrawals are disabled', function () {
@@ -43,6 +50,8 @@ it('refuses an amount above the configured cap', function () {
     expect(fn () => transferService()
         ->create('500', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
         ->toThrow(PaymentProcessingException::class, 'exceeds');
+
+    Http::assertNothingSent();
 });
 
 it('refuses a malformed amount, because the API does not', function () {
@@ -51,14 +60,52 @@ it('refuses a malformed amount, because the API does not', function () {
             ->create($amount, '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
             ->toThrow(PaymentProcessingException::class);
     }
+
+    Http::assertNothingSent();
 });
 
 it('refuses an empty destination address, because the API does not validate it', function () {
     expect(fn () => transferService()->create('25', '  ', 'ETHEREUM', 'USDC'))
         ->toThrow(PaymentProcessingException::class, 'address');
+
+    Http::assertNothingSent();
+});
+
+it('fails closed when withdrawal_max_amount is missing', function () {
+    expect(fn () => transferService(['withdrawal_max_amount' => null])
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
+        ->toThrow(PaymentProcessingException::class);
+
+    Http::assertNothingSent();
+});
+
+it('fails closed when withdrawal_max_amount is an empty string', function () {
+    expect(fn () => transferService(['withdrawal_max_amount' => ''])
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
+        ->toThrow(PaymentProcessingException::class);
+
+    Http::assertNothingSent();
+});
+
+it('fails closed when withdrawal_max_amount is zero', function () {
+    expect(fn () => transferService(['withdrawal_max_amount' => '0'])
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
+        ->toThrow(PaymentProcessingException::class);
+
+    Http::assertNothingSent();
+});
+
+it('fails closed when withdrawal_max_amount is non-numeric', function () {
+    expect(fn () => transferService(['withdrawal_max_amount' => 'not-a-number'])
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
+        ->toThrow(PaymentProcessingException::class);
+
+    Http::assertNothingSent();
 });
 
 it('accepts a 202 and returns the opaque transfer id', function () {
+    fakeDigiblox();
+
     $result = transferService()->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC');
 
     expect($result['id'])->toBe('Qk1ZbFZkN2R3Z1E9')
@@ -66,6 +113,8 @@ it('accepts a 202 and returns the opaque transfer id', function () {
 });
 
 it('sends the fixed reporting fields verbatim', function () {
+    fakeDigiblox();
+
     transferService()->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC');
 
     Http::assertSent(fn ($request) => str_ends_with($request->url(), '/transfers/centralized')
@@ -77,6 +126,8 @@ it('sends the fixed reporting fields verbatim', function () {
 });
 
 it('carries our reference in user_note so treasury exports can be joined', function () {
+    fakeDigiblox();
+
     transferService()->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC', 'WD-777');
 
     Http::assertSent(fn ($request) => str_ends_with($request->url(), '/transfers/centralized')
@@ -84,8 +135,34 @@ it('carries our reference in user_note so treasury exports can be joined', funct
 });
 
 it('truncates a note to the documented 255 characters', function () {
+    fakeDigiblox();
+
     transferService()->create('25', '0xabc', 'ETHEREUM', 'USDC', str_repeat('x', 300));
 
     Http::assertSent(fn ($request) => str_ends_with($request->url(), '/transfers/centralized')
         && strlen($request['user_note']) === 255);
+});
+
+it('treats a 4xx as a clean rejection: no transfer was created', function () {
+    fakeDigiblox(400, ['message' => 'Insufficent funds']);
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
+        ->toThrow(PaymentProcessingException::class, 'no transfer was created');
+});
+
+it('treats a 5xx as ambiguous: a transfer may exist and must not be retried blindly', function () {
+    fakeDigiblox(500, ['message' => 'Internal Server Error']);
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
+        ->toThrow(PaymentProcessingException::class, 'do NOT retry');
+});
+
+it('treats a 202 with a blank id as ambiguous: it must not be retried either', function () {
+    fakeDigiblox(202, ['id' => '', 'status' => 'QUEUED']);
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDC'))
+        ->toThrow(PaymentProcessingException::class, 'do NOT retry');
 });

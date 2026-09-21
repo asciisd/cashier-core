@@ -60,9 +60,31 @@ class DigibloxTransferService
             throw new PaymentProcessingException('Digiblox withdrawal amount must be a positive number.');
         }
 
-        $cap = (float) ($this->config['withdrawal_max_amount'] ?? 0);
+        // Fail CLOSED, not open. A missing key, null, '' or a non-numeric
+        // string must never be treated as "no cap" — that is indistinguishable
+        // from "unlimited" and this is the one guard bounding a first live run
+        // against production credentials with no sandbox. Any of those is a
+        // configuration error: refuse to send rather than guess.
+        $capRaw = $this->config['withdrawal_max_amount'] ?? null;
 
-        if ($cap > 0 && (float) $amount > $cap) {
+        if ($capRaw === null || $capRaw === '' || ! is_numeric($capRaw)) {
+            throw new PaymentProcessingException(
+                'Digiblox withdrawals are enabled but no valid withdrawal_max_amount is configured. Refusing to send.',
+            );
+        }
+
+        $cap = (string) $capRaw;
+
+        // A cap of zero blocks everything — it is not "no cap".
+        if (bccomp($cap, '0', 18) <= 0) {
+            throw new PaymentProcessingException(
+                sprintf('Digiblox withdrawal cap is configured as %s, which blocks all withdrawals.', $cap),
+            );
+        }
+
+        // Compare as strings via bcmath, not by casting to float — this is
+        // money, and crypto assets carry up to 18 decimals.
+        if (bccomp($amount, $cap, 18) > 0) {
             throw new PaymentProcessingException(
                 sprintf('Withdrawal of %s exceeds the configured cap of %s.', $amount, $cap),
             );
@@ -91,16 +113,50 @@ class DigibloxTransferService
             ->post($this->baseUrl().'/gateway/api/v1/v3/transfers/centralized', $body);
 
         // 202 Accepted, not 200.
-        if ($response->status() !== 202) {
+        $status = $response->status();
+
+        if ($status === 202) {
+            $id = (string) ($response->json('id') ?? '');
+
+            // The id is the only handle for polling status later. A 202 with
+            // no id means the transfer may have been created but is now
+            // untrackable — that is exactly as dangerous as a 5xx, so it gets
+            // the same "do not retry" treatment, not a silent empty string.
+            if ($id === '') {
+                throw new PaymentProcessingException(
+                    'Digiblox returned 202 Accepted with no transfer id. A withdrawal may have been created — '
+                    .'do NOT retry this request. Poll transfer status (§6.2) before taking any further action.',
+                );
+            }
+
+            return [
+                'id' => $id,
+                'status' => (string) ($response->json('status') ?? 'QUEUED'),
+            ];
+        }
+
+        // The spec is explicit: on a 5xx, "the transfer may or may not have
+        // been created — check its status before retrying." A caller that
+        // catches broadly and retries risks a duplicate withdrawal, and there
+        // is no idempotency key to save it. Make the ambiguity unmissable.
+        if ($status >= 500) {
             throw new PaymentProcessingException(
-                'Digiblox rejected the withdrawal: '.trim($response->body()),
+                sprintf(
+                    'Digiblox returned a server error (%d) for the withdrawal request. The transfer may or may '
+                    .'not have been created — do NOT retry. Poll transfer status (§6.2) before taking any further '
+                    .'action. Response: %s',
+                    $status,
+                    trim($response->body()),
+                ),
             );
         }
 
-        return [
-            'id' => (string) ($response->json('id') ?? ''),
-            'status' => (string) ($response->json('status') ?? 'QUEUED'),
-        ];
+        // A 4xx (400/401/403, per §6.1) is a clean rejection: Digiblox
+        // validated the request before creating anything, so no transfer was
+        // created and this is safe to correct and resend.
+        throw new PaymentProcessingException(
+            'Digiblox rejected the withdrawal; no transfer was created: '.trim($response->body()),
+        );
     }
 
     private function baseUrl(): string
