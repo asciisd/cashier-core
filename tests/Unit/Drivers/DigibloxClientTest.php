@@ -96,6 +96,40 @@ it('forgets a cached token on demand', function () {
     Http::assertSentCount(4); // two logins, two creates
 });
 
+it('clears the cached token on a 401 so the next call re-mints rather than wedging for the TTL', function () {
+    // A 401 here means our cached token was superseded out-of-band (e.g. an
+    // ops login on the Digiblox dashboard for the same merchant, which
+    // invalidates the previous token). Without dropping the cache, every
+    // subsequent call would fail with the same 401 for up to the 3300s TTL.
+    Http::fake(array_merge(fakeLogin(), [
+        'https://digiblox.test/gateway/api/v1/v3/payments/guests' => Http::sequence()
+            ->push('Unauthorized', 401)
+            ->push(['paymentLink' => 'u'], 201),
+    ]));
+
+    $client = digibloxClient();
+
+    expect(fn () => $client->createPaymentLink(['payload' => ['external_id' => 'A'], 'notification' => []]))
+        ->toThrow(Asciisd\CashierCore\Exceptions\PaymentProcessingException::class);
+
+    // The 401 above must have forgotten the cached token on its own — no
+    // explicit forgetToken() call here — so this second call re-mints.
+    $client->createPaymentLink(['payload' => ['external_id' => 'B'], 'notification' => []]);
+
+    Http::assertSentCount(4); // two logins, two creates
+});
+
+it('treats a 500 on createPaymentLink as ambiguous, distinct from a clean 4xx rejection', function () {
+    // Per spec pitfall #13: on a 500 the link may already exist, and the same
+    // external_id must not be resent blind.
+    Http::fake(array_merge(fakeLogin(), [
+        'https://digiblox.test/gateway/api/v1/v3/payments/guests' => Http::response('Internal Server Error', 500),
+    ]));
+
+    expect(fn () => digibloxClient()->createPaymentLink(['payload' => ['external_id' => 'DEP-1'], 'notification' => []]))
+        ->toThrow(Asciisd\CashierCore\Exceptions\PaymentProcessingException::class, 'do NOT resend');
+});
+
 it('throws with error message when createPaymentLink receives a 400 with message as string', function () {
     Http::fake(array_merge(fakeLogin(), [
         'https://digiblox.test/gateway/api/v1/v3/payments/guests' => Http::response(

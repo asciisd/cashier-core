@@ -84,8 +84,31 @@ class DigibloxClient
             ->acceptJson()
             ->post($this->baseUrl.self::API_PREFIX.'/payments/guests', $body);
 
+        // A superseded token (minted elsewhere for this merchant, e.g. an ops
+        // login in the Digiblox dashboard) reads back as 401. Nothing else
+        // invalidates our cache, so without this the wedged token fails every
+        // call until its TTL expires; forgetting it lets the next call
+        // re-mint. See XoalaClient for the same pattern.
+        if ($response->status() === 401) {
+            $this->forgetToken();
+        }
+
         // 201 Created, not 200. A strict 200 check fails a good link.
         if ($response->status() !== 201) {
+            // Per spec pitfall #13: a 500 may have created the link anyway, and
+            // the same external_id must not be resent blind. A 4xx is a clean
+            // rejection — nothing was created, safe to correct and retry.
+            if ($response->status() >= 500) {
+                throw new PaymentProcessingException(
+                    sprintf(
+                        'Digiblox returned a server error (%d) creating the payment link. The link may or may not '.
+                        'exist — do NOT resend the same external_id blind. Response: %s',
+                        $response->status(),
+                        trim($response->body()),
+                    ),
+                );
+            }
+
             throw new PaymentProcessingException(
                 'Digiblox rejected the payment link: '.$this->errorMessage($response->json(), $response->body()),
             );
@@ -214,6 +237,10 @@ class DigibloxClient
                 'fT' => 'S',
             ]);
 
+        if ($response->status() === 401) {
+            $this->forgetToken();
+        }
+
         if (! $response->successful()) {
             throw new PaymentProcessingException(
                 'Digiblox deposit lookup failed: '.$this->errorMessage($response->json(), $response->body()),
@@ -239,6 +266,10 @@ class DigibloxClient
             ->withToken($this->authToken())
             ->acceptJson()
             ->post($this->baseUrl.self::API_PREFIX.'/auth/check-guest-exists', ['username' => $email]);
+
+        if ($response->status() === 401) {
+            $this->forgetToken();
+        }
 
         if (! $response->successful()) {
             throw new PaymentProcessingException(
@@ -271,6 +302,10 @@ class DigibloxClient
                 'email' => $email,
                 'pii' => $pii,
             ]);
+
+        if ($response->status() === 401) {
+            $this->forgetToken();
+        }
 
         if (! $response->successful()) {
             throw new PaymentProcessingException(

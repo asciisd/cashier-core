@@ -6,6 +6,7 @@ namespace Asciisd\CashierCore\Http\Controllers\Webhooks;
 
 use Asciisd\CashierCore\Events\WebhookReceived;
 use Asciisd\CashierCore\Events\WebhookRejected;
+use Asciisd\CashierCore\Http\Concerns\EnforcesSignatureVerification;
 use Asciisd\CashierCore\Jobs\ProcessPaymentProviderWebhook;
 use Asciisd\CashierCore\Logging\PaymentLogger;
 use Asciisd\CashierCore\Services\Webhooks\ReplayGuard;
@@ -18,13 +19,19 @@ use Illuminate\Routing\Controller;
 /**
  * Digiblox deposit webhook.
  *
- * Digiblox signs nothing — authenticity rests on a static header registered
- * with them and replayed on every delivery. Deliveries are capped at three
- * attempts with a ten-second total timeout, so this ACKs before any business
- * logic and leaves the work to the queue.
+ * Digiblox signs nothing — authenticity rests entirely on a static header
+ * registered with them and replayed on every delivery. That makes the header
+ * this driver's only authenticity mechanism, so an unconfigured header must
+ * never be treated as "unchecked": in production (or wherever verification is
+ * enabled) a missing `webhook_header_name`/`webhook_header_value` is rejected
+ * exactly like a mismatched one, rather than left open to any forged POST.
+ * Deliveries are capped at three attempts with a ten-second total timeout, so
+ * this ACKs before any business logic and leaves the work to the queue.
  */
 class DigibloxWebhookController extends Controller
 {
+    use EnforcesSignatureVerification;
+
     private const DRIVER = 'digiblox';
 
     public function __invoke(
@@ -32,12 +39,20 @@ class DigibloxWebhookController extends Controller
         ReplayGuard $replayGuard,
         WebhookRelay $relay,
     ): JsonResponse {
-        $config = (array) config('cashier-core.connections.'.self::DRIVER, []);
+        if ($this->signatureVerificationEnabled(self::DRIVER)) {
+            $config = (array) config('cashier-core.connections.'.self::DRIVER, []);
 
-        $headerName = (string) ($config['webhook_header_name'] ?? '');
-        $expected = (string) ($config['webhook_header_value'] ?? '');
+            $headerName = (string) ($config['webhook_header_name'] ?? '');
+            $expected = (string) ($config['webhook_header_value'] ?? '');
 
-        if ($headerName !== '' && $expected !== '') {
+            if ($headerName === '' || $expected === '') {
+                PaymentLogger::providerWebhookSignatureInvalid(self::DRIVER, '');
+
+                WebhookRejected::dispatch(self::DRIVER, 'webhook header not configured', $request->ip());
+
+                return response()->json(['error' => 'Invalid credentials'], 403);
+            }
+
             $presented = (string) $request->header($headerName, '');
 
             if (! hash_equals($expected, $presented)) {
@@ -53,8 +68,13 @@ class DigibloxWebhookController extends Controller
 
         // Key on tx_hash, never on external_transaction_id: one payment link
         // can legitimately take several payments, each its own delivery with
-        // the same order id. Keying on the order would silently drop the
-        // second genuine payment.
+        // the same order id. Keying on the order would silently drop a second
+        // genuine payment's delivery at this layer — this only guarantees the
+        // second delivery reaches the queue, not that it is credited:
+        // WebhookProcessor treats a callback on an already-Succeeded
+        // transaction as an out-of-order update and discards it, so a second
+        // payment on the same link still needs its own handling upstream of
+        // this controller.
         $txHash = (string) ($payload['tx_hash'] ?? '');
 
         // A delivery without tx_hash is malformed, but it must still dedupe
