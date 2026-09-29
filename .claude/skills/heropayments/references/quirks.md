@@ -4,7 +4,7 @@ Where the live Heropayments contract departs from its documentation, and where
 the docs are silent. Each entry cites both sides: a passage in a mirror in this
 directory, and a line in this repo.
 
-Three entries are marked **Unverified**: they describe behaviour that may be
+Six entries are marked **Unverified**: they describe behaviour that may be
 wrong in production, recorded rather than fixed because settling them needs
 production callback logs rather than a document search. Each names what would
 settle it.
@@ -171,4 +171,6 @@ networkFee × rate(payoutCurrency → walletCurrency)) × (1 + buffer)` and
 compares it with `v2/balance`. It assumes `merchantAmountUsdt` is denominated
 in the balance's `walletCurrency` and that withdrawal network fees are native
 payout-coin units (see `HeropaymentClient::getNetworkFees()`). Compare the
-estimate with the first live payout's `merchantAmountUsdt`. A payout coin whose withdrawal fee row is missing, null or non-numeric refuses the payout (`quote_unavailable`); it is never estimated as a zero fee.
+estimate with the first live payout's `merchantAmountUsdt`. A payout coin whose
+withdrawal fee row is missing, null or non-numeric refuses the payout
+(`quote_unavailable`); it is never estimated as a zero fee.
