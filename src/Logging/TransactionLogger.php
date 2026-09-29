@@ -385,6 +385,14 @@ class TransactionLogger
         ]);
     }
 
+    public static function withdrawalPayoutOnHold(int $transactionId, string $orderId): void
+    {
+        self::channel()->warning('Withdrawal payout is on hold at the provider - the customer may need to pass KYC', [
+            'transaction_id' => $transactionId,
+            'order_id' => $orderId,
+        ]);
+    }
+
     public static function withdrawalPaidAfterCancellation(int $transactionId, string $status, string $orderId): void
     {
         self::channel()->critical('Provider reports a payout finished on a cancelled or closed withdrawal - manual intervention required', [

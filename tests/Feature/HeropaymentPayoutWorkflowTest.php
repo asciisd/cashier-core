@@ -552,6 +552,23 @@ it('leaves an unknown payout alone on a not-found while its send claim is fresh'
     Event::assertNotDispatched(WithdrawalPayoutFailed::class);
 });
 
+// --- Minor-5: hold is logged for ops -------------------------------------------
+
+it('logs a warning for ops when a payout is put on hold', function () {
+    Log::spy();
+
+    $transaction = hpWithdrawal(['payout_state' => PayoutState::Sent]);
+
+    expect(hpWorkflow()->applyPayoutUpdate($transaction, hpReceipt('hold')))->toBeTrue()
+        ->and($transaction->fresh()->payout_state)->toBe(PayoutState::Sent);
+
+    Log::shouldHaveReceived('warning')
+        ->withArgs(fn (string $message, array $context = []) => str_contains($message, 'hold')
+            && ($context['transaction_id'] ?? null) === $transaction->id
+            && ($context['order_id'] ?? null) === 'WD-01TEST')
+        ->once();
+});
+
 // --- Final-3: locked post-send writes; the attempt id is saved before the POST --
 
 it('does not overwrite a payout that was paid while the send was in flight', function () {

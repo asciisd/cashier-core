@@ -630,6 +630,11 @@ class WithdrawalWorkflow
 
         TransactionLogger::withdrawalPayoutUpdated($row->id, $from?->value, $row->payout_state->value, $receipt->rawStatus, $source);
 
+        // Still Sent, but stuck until someone acts (typically KYC at Heropayments).
+        if ($receipt->rawStatus === 'hold') {
+            TransactionLogger::withdrawalPayoutOnHold($row->id, (string) $row->provider_transaction_id);
+        }
+
         if ($from === $row->payout_state) {
             return true;
         }
