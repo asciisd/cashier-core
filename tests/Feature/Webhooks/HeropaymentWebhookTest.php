@@ -6,6 +6,7 @@ use Asciisd\CashierCore\Drivers\Heropayment\HeropaymentProvider;
 use Asciisd\CashierCore\Events\WebhookReceived;
 use Asciisd\CashierCore\Events\WebhookRejected;
 use Asciisd\CashierCore\Jobs\ProcessPaymentProviderWebhook;
+use Asciisd\CashierCore\Jobs\ProcessPayoutWebhook;
 use Asciisd\CashierCore\Models\WebhookEvent;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
@@ -124,4 +125,32 @@ it('does not double-credit when the finished callback is retried', function () {
 
     // One claim for the delivery — the retry was recognized, not re-claimed.
     expect(WebhookEvent::query()->count())->toBe(1);
+});
+
+it('routes a withdrawal callback to the payout job, never the deposit job', function () {
+    $payload = array_merge(heropaymentCallback('WD-01TEST', 'finished'), ['transactionType' => 'withdrawal']);
+
+    $this->postJson('/api/webhooks/heropayment', $payload, signedHeroHeaders($payload))->assertOk();
+
+    Queue::assertPushed(ProcessPayoutWebhook::class, fn (ProcessPayoutWebhook $job) => $job->payload['externalOrderId'] === 'WD-01TEST'
+        && $job->connectionName === 'heropayment');
+    Queue::assertNotPushed(ProcessPaymentProviderWebhook::class);
+});
+
+it('routes a withdrawal callback whatever the case of its transactionType', function (string $type) {
+    $payload = array_merge(heropaymentCallback('WD-01TEST', 'finished'), ['transactionType' => $type]);
+
+    $this->postJson('/api/webhooks/heropayment', $payload, signedHeroHeaders($payload))->assertOk();
+
+    Queue::assertPushed(ProcessPayoutWebhook::class);
+    Queue::assertNotPushed(ProcessPaymentProviderWebhook::class);
+})->with(['Withdrawal', 'WITHDRAWAL']);
+
+it('keeps routing deposit callbacks to the deposit job', function () {
+    $payload = array_merge(heropaymentCallback('DEP-1'), ['transactionType' => 'deposit']);
+
+    $this->postJson('/api/webhooks/heropayment', $payload, signedHeroHeaders($payload))->assertOk();
+
+    Queue::assertPushed(ProcessPaymentProviderWebhook::class);
+    Queue::assertNotPushed(ProcessPayoutWebhook::class);
 });

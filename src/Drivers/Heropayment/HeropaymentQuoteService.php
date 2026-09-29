@@ -22,6 +22,14 @@ final class HeropaymentQuoteService
 {
     private const DEPOSIT = 'deposit';
 
+    private const WITHDRAWAL = 'withdrawal';
+
+    /**
+     * Strict decimal, applied after trim(): a withdrawal network fee that
+     * fails this (null, missing, "", "n/a", ...) is never read as zero.
+     */
+    private const NUMERIC_PATTERN = '/^\d+(\.\d+)?$/';
+
     /**
      * @param  array<string, mixed>  $config
      */
@@ -122,13 +130,16 @@ final class HeropaymentQuoteService
 
     /**
      * Spot rate: units of $to per 1 unit of $from. Null when unavailable.
+     *
+     * Heropayments quotes deposits and withdrawals separately, so the type is
+     * part of both the request and the cache key.
      */
-    public function rate(string $from, string $to): ?float
+    public function rate(string $from, string $to, string $transactionType = self::DEPOSIT): ?float
     {
         $payload = $this->remember(
-            "rate:{$from}:{$to}",
+            "rate:{$transactionType}:{$from}:{$to}",
             $this->quoteTtl(),
-            fn () => $this->client->getRate($from, $to, self::DEPOSIT),
+            fn () => $this->client->getRate($from, $to, $transactionType),
         );
 
         return isset($payload['rate']) ? (float) $payload['rate'] : null;
@@ -149,22 +160,75 @@ final class HeropaymentQuoteService
     }
 
     /**
+     * Minimum withdrawal for a ticker, in that ticker's own units. Null when unavailable.
+     */
+    public function minWithdrawal(string $currency): ?float
+    {
+        $payload = $this->remember(
+            "min-amount:{$currency}",
+            $this->referenceTtl(),
+            fn () => $this->client->getMinAmount(currency: $currency),
+        );
+
+        return isset($payload['minWithdrawal']) ? (float) $payload['minWithdrawal'] : null;
+    }
+
+    /**
      * Deposit network fees keyed by lowercased ticker, in native currency units.
      *
      * @return array<string, float>
      */
     public function depositNetworkFees(): array
     {
+        return $this->networkFees(self::DEPOSIT);
+    }
+
+    /**
+     * Withdrawal network fees keyed by lowercased ticker, in native currency
+     * units (see HeropaymentClient::getNetworkFees() on why not USDT).
+     *
+     * @return array<string, float>
+     */
+    public function withdrawalNetworkFees(): array
+    {
+        return $this->networkFees(self::WITHDRAWAL);
+    }
+
+    /**
+     * @return array<string, float>
+     */
+    private function networkFees(string $type): array
+    {
         $rows = $this->remember('network-fees', $this->referenceTtl(), fn () => $this->client->getNetworkFees()) ?? [];
 
         $fees = [];
 
         foreach ($rows as $row) {
-            if (($row['type'] ?? null) !== self::DEPOSIT) {
+            if (($row['type'] ?? null) !== $type) {
                 continue;
             }
 
-            $fees[strtolower((string) ($row['ticker'] ?? ''))] = (float) ($row['networkfee'] ?? 0);
+            $ticker = strtolower((string) ($row['ticker'] ?? ''));
+
+            // Withdrawal fees gate a real money transfer: a null, missing or
+            // non-numeric networkfee must never be read as zero, so the
+            // ticker is simply absent from the map (preflight then refuses
+            // with QUOTE_UNAVAILABLE instead of assuming no fee). Deposit
+            // rows keep the historical `?? 0` behaviour the deposit screen
+            // depends on.
+            if ($type === self::WITHDRAWAL) {
+                $raw = trim((string) ($row['networkfee'] ?? ''));
+
+                if (! preg_match(self::NUMERIC_PATTERN, $raw)) {
+                    continue;
+                }
+
+                $fees[$ticker] = (float) $raw;
+
+                continue;
+            }
+
+            $fees[$ticker] = (float) ($row['networkfee'] ?? 0);
         }
 
         return $fees;

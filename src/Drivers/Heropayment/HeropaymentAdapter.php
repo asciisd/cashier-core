@@ -7,13 +7,24 @@ namespace Asciisd\CashierCore\Drivers\Heropayment;
 use Asciisd\CashierCore\Contracts\PaymentAdapterInterface;
 use Asciisd\CashierCore\DataObjects\PaymentMethodSnapshot;
 use Asciisd\CashierCore\DataObjects\PaymentResult;
+use Asciisd\CashierCore\DataObjects\PayoutReceipt;
 use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
 use Asciisd\CashierCore\Enums\PaymentMethodBrand;
 use Asciisd\CashierCore\Enums\PaymentMethodType;
 use Asciisd\CashierCore\Enums\PaymentStatus;
+use Asciisd\CashierCore\Enums\PayoutState;
+use Asciisd\CashierCore\Logging\PaymentLogger;
 
 class HeropaymentAdapter implements PaymentAdapterInterface
 {
+    /**
+     * The V2 withdrawal vocabulary (overview.md, "Withdrawal statuses").
+     */
+    private const PAYOUT_STATUSES = [
+        'waiting', 'confirming', 'exchanging', 'hold', 'sending',
+        'finished', 'failed', 'refunded',
+    ];
+
     /**
      * Transform an invoice creation response into a PaymentResult.
      * The hosted widget URL is in `invoiceUrl`.
@@ -120,6 +131,42 @@ class HeropaymentAdapter implements PaymentAdapterInterface
     public function getProviderName(): string
     {
         return 'heropayment';
+    }
+
+    /**
+     * Map a V2 withdrawal status. Anything unrecognised is still in flight:
+     * that never closes or refunds a withdrawal, so it is the safe default.
+     */
+    public function mapPayoutStatus(string $status): PayoutState
+    {
+        return match (strtolower($status)) {
+            'finished' => PayoutState::Paid,
+            'failed', 'refunded' => PayoutState::Failed,
+            default => PayoutState::Sent,
+        };
+    }
+
+    /**
+     * A create response, lookup or callback body as a PayoutReceipt.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    public function payoutReceipt(array $payload): PayoutReceipt
+    {
+        $raw = strtolower((string) ($payload['status'] ?? ''));
+        $state = $this->mapPayoutStatus($raw);
+
+        if (! in_array($raw, self::PAYOUT_STATUSES, true)) {
+            PaymentLogger::providerPayoutStatusUnrecognised('heropayment', (string) ($payload['externalOrderId'] ?? ''), $raw);
+        }
+
+        return new PayoutReceipt(
+            reference: isset($payload['id']) && $payload['id'] !== '' ? (string) $payload['id'] : null,
+            rawStatus: $raw,
+            state: $state,
+            payload: $payload,
+            error: $state === PayoutState::Failed ? (string) ($payload['error'] ?? "Heropayment status: {$raw}") : null,
+        );
     }
 
     /**

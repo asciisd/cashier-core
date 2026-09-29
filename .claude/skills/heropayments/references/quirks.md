@@ -4,7 +4,7 @@ Where the live Heropayments contract departs from its documentation, and where
 the docs are silent. Each entry cites both sides: a passage in a mirror in this
 directory, and a line in this repo.
 
-Three entries are marked **Unverified**: they describe behaviour that may be
+Seven entries are marked **Unverified**: they describe behaviour that may be
 wrong in production, recorded rather than fixed because settling them needs
 production callback logs rather than a document search. Each names what would
 settle it.
@@ -145,3 +145,45 @@ knows only the V2 names, so all three Custody in-progress statuses fall through
 Latent, not live: nothing in this package calls `/custody`. Recorded because the
 Custody mirror now ships beside it, and the first person to switch flows will
 not otherwise see this.
+
+## 11. A failed payout still reserves its `externalOrderId` — **Unverified**
+
+`WithdrawalWorkflow::sendPayout()` gives every resend after a failure a new
+order id (`WD-<ULID>-2`, `-3`, …) on the assumption that Heropayments keeps a
+failed or refunded payment's `externalOrderId` taken. The docs only say the id
+"must be unique to create a transaction". Confirm on the first live failure;
+if failed ids are released, the suffix is harmless but unnecessary.
+
+## 12. A duplicate `externalOrderId` is a 4xx whose message contains "not unique" — **Unverified**
+
+`HeropaymentPayoutService::send()` treats that response as "an earlier attempt
+landed" and looks the payout up instead of failing. `errors.md` lists the
+message (`Field externalOrderId for this user is not unique`, 400) but not the
+body shape; the service reads `message`, then `error`, then the raw body.
+This is the idempotency key that makes resending an unknown payout safe —
+confirm it before relying on it at volume.
+
+## 13. Which currency the withdrawal deduction is quoted in — **Unverified**
+
+The payout preflight estimates the deduction as
+`(amount × rate(currency → walletCurrency, withdrawal) × (1 + fee_percent) +
+networkFee × rate(payoutCurrency → walletCurrency)) × (1 + buffer)` and
+compares it with `v2/balance`. It assumes `merchantAmountUsdt` is denominated
+in the balance's `walletCurrency` and that withdrawal network fees are native
+payout-coin units (see `HeropaymentClient::getNetworkFees()`). Compare the
+estimate with the first live payout's `merchantAmountUsdt`. A payout coin whose
+withdrawal fee row is missing, null or non-numeric refuses the payout
+(`quote_unavailable`); it is never estimated as a zero fee.
+
+## 14. An unknown order id is answered with HTTP 404 — **Unverified**
+
+`HeropaymentPayoutService::lookup()` (via
+`HeropaymentClient::getPaymentByOrderIdResponse()`) reads only a 404 from
+`GET /v2/payments/order/{id}` as "no such payout". Any other answer — a 5xx,
+another 4xx, a timeout, a 2xx without an `id` — is "lookup failed" and throws
+`PayoutOutcomeUnknownException`. The docs do not say what the endpoint returns
+for an order it has never seen. Until that is confirmed, a payout whose send
+was unknown stays Unknown (fail-safe: never resent) unless the lookup returns
+404; `WithdrawalWorkflow::syncPayout()` only moves an unknown payout to Failed
+on that 404, and only once its send claim has expired. Confirm with a lookup of
+a made-up order id against production.

@@ -206,6 +206,31 @@ return [
     |     'withdrawal_max_amount' => env('DIGIBLOX_WITHDRAWAL_MAX_AMOUNT', '100'),
     | ],
     |
+    | Heropayments deposits open a hosted widget; withdrawals are pushed by
+    | WithdrawalWorkflow::sendPayout() after an admin approves, and closed by
+    | callback. The host stores payout_address, payout_currency (a
+    | Heropayments ticker such as usdttrc20), and optionally payout_extra_id
+    | and customer_email, in the withdrawal's details.
+    |
+    | 'heropayment' => [
+    |     'driver' => 'heropayment',
+    |     'base_url' => env('HEROPAYMENT_BASE_URL'),   // defaults to https://api.heropayments.io
+    |     'api_key' => env('HEROPAYMENT_API_KEY'),
+    |     'api_secret' => env('HEROPAYMENT_API_SECRET'),
+    |     // Also the payout callback. Payouts refuse to send without one (an empty value does not fall back to the package route).
+    |     'webhook_url' => env('HEROPAYMENT_WEBHOOK_URL'),
+    |     // The contracted processing fee. Heropayments only reveals it after a
+    |     // payment exists, so the payout balance check needs it configured.
+    |     'fee_percent' => env('HEROPAYMENT_FEE_PERCENT'),
+    |     // Withdrawals move real money and there is no sandbox. Off until the
+    |     // flow is proven; every payout is capped at withdrawal_max_amount.
+    |     'withdrawals_enabled' => env('HEROPAYMENT_WITHDRAWALS_ENABLED', false),
+    |     'withdrawal_max_amount' => env('HEROPAYMENT_WITHDRAWAL_MAX_AMOUNT'),
+    |     // Headroom over the estimated deduction for rate movement between
+    |     // the balance check and the send.
+    |     'balance_buffer_percent' => env('HEROPAYMENT_BALANCE_BUFFER_PERCENT', 2),
+    | ],
+    |
     */
     'connections' => [],
 

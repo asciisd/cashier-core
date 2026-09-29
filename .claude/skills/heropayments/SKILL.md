@@ -14,9 +14,9 @@ contract is available offline and upstream changes show up as diffs.
 Read the one you need; they are large.
 
 - `references/quirks.md` — **start here.** Where the live API departs from its
-  own docs, and where the docs are silent. Ten entries, each citing the code in
-  this package that handles it. Three are marked **Unverified**: they may be
-  live defects.
+  own docs, and where the docs are silent. Fourteen entries, each citing the
+  code in this package that handles it. Seven are marked **Unverified**: they may
+  be live defects.
 - `references/overview.md` — auth, HMAC-SHA512 request signing with worked
   samples in five languages, both integration flows, the two status
   vocabularies, multiple-deposit and mistaken-deposit processing, static
@@ -63,9 +63,13 @@ Five things that will otherwise cost time:
 - `src/Drivers/Heropayment/HeropaymentQuote.php` — the quote value object
 - `src/Http/Controllers/Webhooks/HeropaymentWebhookController.php` — callback
   entry point, signature check, replay guard
+- `src/Drivers/Heropayment/HeropaymentPayoutService.php` — V2 withdrawals:
+  balance preflight, send, lookup; fail-closed behind `withdrawals_enabled`
+- `src/Jobs/ProcessPayoutWebhook.php` — withdrawal callbacks (routed by
+  `transactionType`), applied through `WithdrawalWorkflow::applyPayoutUpdate()`
 
-Refunds, capture, authorize and void all throw: Heropayments has no
-merchant-initiated refund.
+Payouts are supported through `SendsPayouts` (V2 only). Refunds, capture,
+authorize and void all throw: Heropayments has no merchant-initiated refund.
 
 ## Refreshing
 

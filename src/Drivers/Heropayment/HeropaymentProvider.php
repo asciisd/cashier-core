@@ -6,7 +6,11 @@ namespace Asciisd\CashierCore\Drivers\Heropayment;
 
 use Asciisd\CashierCore\Contracts\PaymentProcessorInterface;
 use Asciisd\CashierCore\Contracts\ProvidesWebhookTransactionId;
+use Asciisd\CashierCore\Contracts\SendsPayouts;
 use Asciisd\CashierCore\DataObjects\PaymentResult;
+use Asciisd\CashierCore\DataObjects\PayoutPreflight;
+use Asciisd\CashierCore\DataObjects\PayoutReceipt;
+use Asciisd\CashierCore\DataObjects\PayoutRequest;
 use Asciisd\CashierCore\DataObjects\RefundResult;
 use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
@@ -16,17 +20,19 @@ use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 
-class HeropaymentProvider implements PaymentProcessorInterface, ProvidesWebhookTransactionId
+class HeropaymentProvider implements PaymentProcessorInterface, ProvidesWebhookTransactionId, SendsPayouts
 {
     private HeropaymentClient $client;
 
     private HeropaymentAdapter $adapter;
 
+    private ?HeropaymentPayoutService $payouts = null;
+
     /** @var array<string, mixed> */
     private array $config;
 
     /** @var string[] */
-    private array $supportedFeatures = ['charge', 'webhook'];
+    private array $supportedFeatures = ['charge', 'webhook', 'payout'];
 
     public function __construct(array $config = [])
     {
@@ -212,5 +218,30 @@ class HeropaymentProvider implements PaymentProcessorInterface, ProvidesWebhookT
     public function supports(string $feature): bool
     {
         return in_array($feature, $this->supportedFeatures);
+    }
+
+    public function preflight(PayoutRequest $request): PayoutPreflight
+    {
+        return $this->payouts()->preflight($request);
+    }
+
+    public function send(PayoutRequest $request): PayoutReceipt
+    {
+        return $this->payouts()->send($request);
+    }
+
+    public function lookup(string $externalOrderId): ?PayoutReceipt
+    {
+        return $this->payouts()->lookup($externalOrderId);
+    }
+
+    public function parsePayoutWebhook(array $payload): PayoutReceipt
+    {
+        return $this->payouts()->parsePayoutWebhook($payload);
+    }
+
+    private function payouts(): HeropaymentPayoutService
+    {
+        return $this->payouts ??= new HeropaymentPayoutService($this->config, $this->client);
     }
 }

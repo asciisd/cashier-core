@@ -10,6 +10,7 @@ use Asciisd\CashierCore\Events\WebhookReceived;
 use Asciisd\CashierCore\Events\WebhookRejected;
 use Asciisd\CashierCore\Http\Concerns\EnforcesSignatureVerification;
 use Asciisd\CashierCore\Jobs\ProcessPaymentProviderWebhook;
+use Asciisd\CashierCore\Jobs\ProcessPayoutWebhook;
 use Asciisd\CashierCore\Logging\PaymentLogger;
 use Asciisd\CashierCore\Services\Webhooks\ReplayGuard;
 use Asciisd\CashierCore\Services\Webhooks\WebhookRelay;
@@ -54,7 +55,15 @@ class HeropaymentWebhookController extends Controller
 
         $relay->maybeRelay(self::DRIVER, self::DRIVER, $payload, $request);
 
-        ProcessPaymentProviderWebhook::dispatch(self::DRIVER, $payload, self::DRIVER);
+        // One callback URL serves both directions; the payload says which.
+        // Withdrawal callbacks must never reach the deposit pipeline.
+        $transactionType = $payload['transactionType'] ?? '';
+
+        if (is_string($transactionType) && strtolower($transactionType) === 'withdrawal') {
+            ProcessPayoutWebhook::dispatch(self::DRIVER, $payload, self::DRIVER);
+        } else {
+            ProcessPaymentProviderWebhook::dispatch(self::DRIVER, $payload, self::DRIVER);
+        }
 
         WebhookReceived::dispatch(self::DRIVER, self::DRIVER, (new PayloadRedactor)->redact($payload));
 

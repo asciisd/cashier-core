@@ -4,6 +4,7 @@ use Asciisd\CashierCore\Drivers\Heropayment\HeropaymentAdapter;
 use Asciisd\CashierCore\Enums\PaymentMethodBrand;
 use Asciisd\CashierCore\Enums\PaymentMethodType;
 use Asciisd\CashierCore\Enums\PaymentStatus;
+use Asciisd\CashierCore\Enums\PayoutState;
 
 beforeEach(function () {
     $this->adapter = new HeropaymentAdapter;
@@ -144,4 +145,32 @@ describe('crypto payment method snapshot', function () {
             ->and($result->paymentMethodSnapshot->brand)->toBe(PaymentMethodBrand::Other)
             ->and($result->paymentMethodSnapshot->displayName)->toBe('Crypto');
     });
+});
+
+it('maps V2 withdrawal statuses to payout states', function (string $status, PayoutState $state) {
+    expect((new \Asciisd\CashierCore\Drivers\Heropayment\HeropaymentAdapter)->mapPayoutStatus($status))->toBe($state);
+})->with([
+    ['waiting', PayoutState::Sent],
+    ['confirming', PayoutState::Sent],
+    ['exchanging', PayoutState::Sent],
+    ['hold', PayoutState::Sent],
+    ['sending', PayoutState::Sent],
+    ['finished', PayoutState::Paid],
+    ['failed', PayoutState::Failed],
+    ['refunded', PayoutState::Failed],
+    ['FINISHED', PayoutState::Paid],
+    ['something-new', PayoutState::Sent],
+]);
+
+it('builds a payout receipt carrying the payment id and a failure reason', function () {
+    $receipt = (new \Asciisd\CashierCore\Drivers\Heropayment\HeropaymentAdapter)->payoutReceipt([
+        'id' => 'hero-wd-9',
+        'status' => 'refunded',
+        'externalOrderId' => 'WD-01TEST',
+    ]);
+
+    expect($receipt->reference)->toBe('hero-wd-9')
+        ->and($receipt->rawStatus)->toBe('refunded')
+        ->and($receipt->state)->toBe(PayoutState::Failed)
+        ->and($receipt->error)->toBe('Heropayment status: refunded');
 });

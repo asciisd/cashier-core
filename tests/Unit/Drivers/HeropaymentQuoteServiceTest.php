@@ -162,3 +162,47 @@ it('skips tickers the provider does not support', function () {
     // "usdt" is not a ticker — the network is part of it (usdt20, usdttrc20, ...).
     expect(heroQuoteService()->availableCurrencies(['usdt', 'usdttrc20']))->toHaveCount(1);
 });
+
+it('reads withdrawal network fees separately from deposit fees', function () {
+    fakeHeroLookups();
+
+    expect(heroQuoteService()->withdrawalNetworkFees())->toBe(['usdttrc20' => 9.99]);
+});
+
+it('omits a withdrawal fee row whose networkfee is null or non-numeric instead of reading it as zero', function () {
+    fakeHeroLookups(['hero.test/v2/network-fees' => Http::response([
+        ['networkfee' => '9.9900000000', 'ticker' => 'usdttrc20', 'type' => 'withdrawal'],
+        ['networkfee' => null, 'ticker' => 'btc', 'type' => 'withdrawal'],
+        ['networkfee' => 'n/a', 'ticker' => 'doge', 'type' => 'withdrawal'],
+    ])]);
+
+    expect(heroQuoteService()->withdrawalNetworkFees())->toBe(['usdttrc20' => 9.99]);
+});
+
+it('still reads a deposit fee row with a null networkfee as zero', function () {
+    fakeHeroLookups(['hero.test/v2/network-fees' => Http::response([
+        ['networkfee' => null, 'ticker' => 'btc', 'type' => 'deposit'],
+    ])]);
+
+    expect(heroQuoteService()->depositNetworkFees())->toBe(['btc' => 0.0]);
+});
+
+it('reads the minimum withdrawal for a ticker', function () {
+    fakeHeroLookups(['hero.test/v2/min-amount*' => Http::response([
+        'minDeposit' => 5.0,
+        'minWithdrawal' => 12.5,
+        'currency' => 'usdttrc20',
+    ])]);
+
+    expect(heroQuoteService()->minWithdrawal('usdttrc20'))->toBe(12.5);
+});
+
+it('asks for a withdrawal rate and caches it apart from the deposit rate', function () {
+    fakeHeroLookups();
+
+    heroQuoteService()->rate('usd', 'usdttrc20');
+    heroQuoteService()->rate('usd', 'usdttrc20', 'withdrawal');
+
+    Http::assertSent(fn ($request) => str_contains($request->url(), 'transactionType=withdrawal'));
+    Http::assertSent(fn ($request) => str_contains($request->url(), 'transactionType=deposit'));
+});
