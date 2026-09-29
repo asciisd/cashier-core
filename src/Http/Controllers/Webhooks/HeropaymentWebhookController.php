@@ -57,7 +57,9 @@ class HeropaymentWebhookController extends Controller
 
         // One callback URL serves both directions; the payload says which.
         // Withdrawal callbacks must never reach the deposit pipeline.
-        if (($payload['transactionType'] ?? null) === 'withdrawal') {
+        $transactionType = $payload['transactionType'] ?? '';
+
+        if (is_string($transactionType) && strtolower($transactionType) === 'withdrawal') {
             ProcessPayoutWebhook::dispatch(self::DRIVER, $payload, self::DRIVER);
         } else {
             ProcessPaymentProviderWebhook::dispatch(self::DRIVER, $payload, self::DRIVER);
