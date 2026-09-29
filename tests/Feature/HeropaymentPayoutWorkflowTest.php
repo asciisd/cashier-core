@@ -119,6 +119,19 @@ it('leaves the row untouched and alerts ops when the balance is short', function
     Event::assertDispatched(PayoutFundsInsufficient::class, fn ($event) => $event->balance === '50.00');
 });
 
+it('releases the claim and fails cleanly when the preflight throws unexpectedly', function () {
+    HeropaymentPayoutApi::fake(['balance' => fn () => Http::response('"ok"')]);
+
+    $result = hpWorkflow()->sendPayout($transaction = hpWithdrawal(), hpActor());
+    $fresh = $transaction->fresh();
+
+    expect($result->ok)->toBeFalse()
+        ->and($fresh->payout_state)->toBeNull()
+        ->and($fresh->metadata)->not->toHaveKey(TransferClaim::METADATA_KEY);
+
+    Http::assertNotSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal'));
+});
+
 it('records a rejection in metadata, never in error_message', function () {
     Event::fake([WithdrawalPayoutFailed::class]);
     HeropaymentPayoutApi::fake(['withdrawal' => Http::response(['message' => 'Payout address not valid'], 400)]);

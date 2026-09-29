@@ -445,6 +445,12 @@ class WithdrawalWorkflow
             $this->transferClaim->release($claimed);
 
             return Result::failed($e->getMessage());
+        } catch (Throwable $e) {
+            // Nothing has been sent yet at this point — releasing is always
+            // safe, unlike an exception from provider->send() below.
+            $this->transferClaim->release($claimed);
+
+            return Result::failed('The payout check failed before anything was sent: '.$e->getMessage());
         }
 
         if (! $preflight->ok) {
