@@ -145,3 +145,30 @@ knows only the V2 names, so all three Custody in-progress statuses fall through
 Latent, not live: nothing in this package calls `/custody`. Recorded because the
 Custody mirror now ships beside it, and the first person to switch flows will
 not otherwise see this.
+
+## 11. A failed payout still reserves its `externalOrderId` — **Unverified**
+
+`WithdrawalWorkflow::sendPayout()` gives every resend after a failure a new
+order id (`WD-<ULID>-2`, `-3`, …) on the assumption that Heropayments keeps a
+failed or refunded payment's `externalOrderId` taken. The docs only say the id
+"must be unique to create a transaction". Confirm on the first live failure;
+if failed ids are released, the suffix is harmless but unnecessary.
+
+## 12. A duplicate `externalOrderId` is a 4xx whose message contains "not unique" — **Unverified**
+
+`HeropaymentPayoutService::send()` treats that response as "an earlier attempt
+landed" and looks the payout up instead of failing. `errors.md` lists the
+message (`Field externalOrderId for this user is not unique`, 400) but not the
+body shape; the service reads `message`, then `error`, then the raw body.
+This is the idempotency key that makes resending an unknown payout safe —
+confirm it before relying on it at volume.
+
+## 13. Which currency the withdrawal deduction is quoted in — **Unverified**
+
+The payout preflight estimates the deduction as
+`(amount × rate(currency → walletCurrency, withdrawal) × (1 + fee_percent) +
+networkFee × rate(payoutCurrency → walletCurrency)) × (1 + buffer)` and
+compares it with `v2/balance`. It assumes `merchantAmountUsdt` is denominated
+in the balance's `walletCurrency` and that withdrawal network fees are native
+payout-coin units (see `HeropaymentClient::getNetworkFees()`). Compare the
+estimate with the first live payout's `merchantAmountUsdt`. A payout coin whose withdrawal fee row is missing, null or non-numeric refuses the payout (`quote_unavailable`); it is never estimated as a zero fee.

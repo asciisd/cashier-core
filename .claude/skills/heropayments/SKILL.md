@@ -63,9 +63,13 @@ Five things that will otherwise cost time:
 - `src/Drivers/Heropayment/HeropaymentQuote.php` — the quote value object
 - `src/Http/Controllers/Webhooks/HeropaymentWebhookController.php` — callback
   entry point, signature check, replay guard
+- `src/Drivers/Heropayment/HeropaymentPayoutService.php` — V2 withdrawals:
+  balance preflight, send, lookup; fail-closed behind `withdrawals_enabled`
+- `src/Jobs/ProcessPayoutWebhook.php` — withdrawal callbacks (routed by
+  `transactionType`), applied through `WithdrawalWorkflow::applyPayoutUpdate()`
 
-Refunds, capture, authorize and void all throw: Heropayments has no
-merchant-initiated refund.
+Payouts are supported through `SendsPayouts` (V2 only). Refunds, capture,
+authorize and void all throw: Heropayments has no merchant-initiated refund.
 
 ## Refreshing
 
