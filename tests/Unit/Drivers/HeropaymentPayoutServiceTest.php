@@ -309,3 +309,33 @@ it('returns null when the lookup finds nothing', function () {
 
     expect(hpService()->lookup('WD-01TEST'))->toBeNull();
 });
+
+// --- Final-2: a failed lookup is never "not found" -----------------------------
+
+it('returns null only on a definitive 404', function () {
+    HeropaymentPayoutApi::fake(['lookup' => Http::response(['message' => 'Not found'], 404)]);
+
+    expect(hpService()->lookup('WD-01TEST'))->toBeNull();
+});
+
+it('throws outcome-unknown when the lookup itself fails', function (mixed $answer) {
+    HeropaymentPayoutApi::fake(['lookup' => $answer]);
+
+    expect(fn () => hpService()->lookup('WD-01TEST'))
+        ->toThrow(PayoutOutcomeUnknownException::class, 'lookup failed');
+})->with([
+    '500' => fn () => Http::response(['message' => 'internal server error'], 500),
+    '403' => fn () => Http::response(['message' => 'Forbidden'], 403),
+    'timeout' => fn () => fn () => throw new ConnectionException('cURL error 28: timed out'),
+    '200 no id' => fn () => Http::response(['status' => 'waiting']),
+    '200 non-array' => fn () => Http::response('"ok"'),
+]);
+
+it('reports unknown when not-unique is followed by a failed lookup', function () {
+    HeropaymentPayoutApi::fake([
+        'withdrawal' => Http::response(['message' => 'Field externalOrderId for this user is not unique'], 400),
+        'lookup' => Http::response(['message' => 'internal server error'], 500),
+    ]);
+
+    expect(fn () => hpService()->send(hpRequest()))->toThrow(PayoutOutcomeUnknownException::class);
+});

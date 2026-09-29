@@ -14,8 +14,8 @@ contract is available offline and upstream changes show up as diffs.
 Read the one you need; they are large.
 
 - `references/quirks.md` — **start here.** Where the live API departs from its
-  own docs, and where the docs are silent. Thirteen entries, each citing the
-  code in this package that handles it. Six are marked **Unverified**: they may
+  own docs, and where the docs are silent. Fourteen entries, each citing the
+  code in this package that handles it. Seven are marked **Unverified**: they may
   be live defects.
 - `references/overview.md` — auth, HMAC-SHA512 request signing with worked
   samples in five languages, both integration flows, the two status

@@ -144,6 +144,27 @@ class HeropaymentClient
     }
 
     /**
+     * The raw response for our external order id, signed like every other
+     * GET and never thrown on an HTTP status. Payout lookups need the status
+     * code: a 404 means "definitively not found", anything else that is not a
+     * payment means the lookup failed — getPaymentByOrderId() folds both into
+     * null. A timeout surfaces as ConnectionException.
+     */
+    public function getPaymentByOrderIdResponse(string $orderId): Response
+    {
+        $path = "/v2/payments/order/{$orderId}";
+        $query = parse_url($this->baseUrl.$path, PHP_URL_QUERY) ?? '';
+
+        return PspHttp::idempotent()->withHeaders([
+            'x-api-key' => $this->apiKey,
+            'x-api-sign' => $this->sign((string) $query),
+        ])
+            ->acceptJson()
+            ->timeout(30)
+            ->get($this->baseUrl.$path);
+    }
+
+    /**
      * The merchant balance: one wallet, e.g.
      * `{walletAddress, walletCurrency: "usdttrc20", balance: "333.80103"}`.
      * Null on any non-2xx — callers must treat that as "unknown", never "enough".

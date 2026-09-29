@@ -395,9 +395,13 @@ it('syncs a sent payout from the provider', function () {
 it('reports when the provider has no such payout', function () {
     HeropaymentPayoutApi::fake();
 
-    $result = hpWorkflow()->syncPayout(hpWithdrawal(['payout_state' => PayoutState::Unknown]), hpActor());
+    // A Sent row the provider cannot find is reported, never moved: only an
+    // unknown send is resolved to Failed by a definitive not-found (Final-2).
+    $result = hpWorkflow()->syncPayout($transaction = hpWithdrawal(['payout_state' => PayoutState::Sent]), hpActor());
 
-    expect($result->ok)->toBeFalse()->and($result->message)->toContain('No payout found');
+    expect($result->ok)->toBeFalse()
+        ->and($result->message)->toContain('No payout found')
+        ->and($transaction->fresh()->payout_state)->toBe(PayoutState::Sent);
 });
 
 it('only syncs payouts that are sent or unknown', function () {
@@ -436,4 +440,114 @@ it('announces a paid payout exactly once when finished is delivered twice', func
     hpWorkflow()->applyPayoutUpdate($transaction->fresh(), hpReceipt('finished'));
 
     Event::assertDispatchedTimes(WithdrawalMarkedPaid::class, 1);
+});
+
+// --- Final-2: a failed lookup is never "not found" ------------------------------
+
+it('refuses to resend an unknown payout when the lookup fails', function () {
+    HeropaymentPayoutApi::fake(['lookup' => Http::response(['message' => 'internal server error'], 500)]);
+
+    $transaction = hpWithdrawal(['payout_state' => PayoutState::Unknown]);
+
+    $result = hpWorkflow()->sendPayout($transaction, hpActor());
+    $fresh = $transaction->fresh();
+
+    expect($result->ok)->toBeFalse()
+        ->and($result->message)->toBe('Could not confirm the earlier payout at the provider; nothing was sent. Try Check status later.')
+        ->and($fresh->payout_state)->toBe(PayoutState::Unknown)
+        ->and($fresh->provider_transaction_id)->toBe('WD-01TEST')
+        ->and($fresh->metadata)->not->toHaveKey(TransferClaim::METADATA_KEY);
+
+    Http::assertNotSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal'));
+});
+
+it('refuses to resend an unknown payout when the lookup times out', function () {
+    HeropaymentPayoutApi::fake(['lookup' => fn () => throw new ConnectionException('cURL error 28: timed out')]);
+
+    $transaction = hpWithdrawal(['payout_state' => PayoutState::Unknown]);
+
+    expect(hpWorkflow()->sendPayout($transaction, hpActor())->ok)->toBeFalse()
+        ->and($transaction->fresh()->payout_state)->toBe(PayoutState::Unknown);
+
+    Http::assertNotSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal'));
+});
+
+it('applies an unknown payout found at the provider without sending again', function () {
+    HeropaymentPayoutApi::fake(['lookup' => Http::response(HeropaymentPayoutApi::withdrawal(['status' => 'sending']))]);
+
+    $transaction = hpWithdrawal(['payout_state' => PayoutState::Unknown]);
+
+    $result = hpWorkflow()->sendPayout($transaction, hpActor());
+
+    expect($result->ok)->toBeTrue()
+        ->and($result->message)->toContain('earlier payout was found')
+        ->and($transaction->fresh()->payout_state)->toBe(PayoutState::Sent);
+
+    Http::assertNotSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal'));
+});
+
+it('reports a failed lookup on sync and changes nothing', function () {
+    HeropaymentPayoutApi::fake(['lookup' => Http::response(['message' => 'internal server error'], 500)]);
+
+    $transaction = hpWithdrawal(['payout_state' => PayoutState::Unknown]);
+
+    $result = hpWorkflow()->syncPayout($transaction, hpActor());
+
+    expect($result->ok)->toBeFalse()
+        ->and($result->message)->toBe('The provider lookup failed; try again later.')
+        ->and($transaction->fresh()->payout_state)->toBe(PayoutState::Unknown);
+
+    $audit = AdminAction::query()->where('action', 'withdrawal.sync-payout')->sole();
+    expect($audit->context)->toMatchArray(['found' => false, 'lookup_failed' => true]);
+});
+
+it('marks an unknown payout the provider never received as failed, so it can be resent', function (array $metadata) {
+    Event::fake([WithdrawalPayoutFailed::class]);
+    HeropaymentPayoutApi::fake();
+
+    $transaction = hpWithdrawal(['payout_state' => PayoutState::Unknown, 'metadata' => $metadata]);
+
+    $result = hpWorkflow()->syncPayout($transaction, hpActor());
+    $fresh = $transaction->fresh();
+
+    expect($result->ok)->toBeTrue()
+        ->and($result->message)->toBe('No payout exists at the provider; marked failed so it can be resent or cancelled.')
+        ->and($fresh->status)->toBe(PaymentStatus::Processing)
+        ->and($fresh->payout_state)->toBe(PayoutState::Failed)
+        ->and($fresh->metadata['payout_error'])->toBe('No payout found at the provider for order WD-01TEST after an unknown send.')
+        ->and($fresh->metadata)->not->toHaveKey(TransferClaim::METADATA_KEY)
+        ->and($fresh->error_message)->toBeNull();
+
+    $audit = AdminAction::query()->where('action', 'withdrawal.sync-payout')->sole();
+    expect($audit->context)->toMatchArray(['found' => false, 'resolved' => 'failed']);
+    Event::assertDispatched(WithdrawalPayoutFailed::class);
+
+    expect(hpWorkflow()->sendPayout($fresh, hpActor())->ok)->toBeTrue()
+        ->and($transaction->fresh()->provider_transaction_id)->toBe('WD-01TEST-2');
+
+    Http::assertSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal')
+        && $request['externalOrderId'] === 'WD-01TEST-2');
+})->with([
+    'no claim' => [['ledger_account' => 70001]],
+    'stale claim' => fn () => [['ledger_account' => 70001, TransferClaim::METADATA_KEY => now()->subMinutes(11)->toIso8601String()]],
+]);
+
+it('leaves an unknown payout alone on a not-found while its send claim is fresh', function () {
+    Event::fake([WithdrawalPayoutFailed::class]);
+    HeropaymentPayoutApi::fake();
+
+    $transaction = hpWithdrawal([
+        'payout_state' => PayoutState::Unknown,
+        'metadata' => ['ledger_account' => 70001, TransferClaim::METADATA_KEY => now()->toIso8601String()],
+    ]);
+
+    $result = hpWorkflow()->syncPayout($transaction, hpActor());
+    $fresh = $transaction->fresh();
+
+    expect($result->ok)->toBeFalse()
+        ->and($result->message)->toContain('No payout found')
+        ->and($fresh->payout_state)->toBe(PayoutState::Unknown)
+        ->and($fresh->metadata)->toHaveKey(TransferClaim::METADATA_KEY);
+
+    Event::assertNotDispatched(WithdrawalPayoutFailed::class);
 });

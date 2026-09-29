@@ -406,8 +406,13 @@ class WithdrawalWorkflow
         }
 
         // An unknown send may have landed: resolve it before sending anything.
+        // Only a definitive not-found lets the same order id go out again.
         if ($transaction->payout_state === PayoutState::Unknown) {
-            $existing = $this->lookupPayout($provider, (string) $transaction->provider_transaction_id);
+            try {
+                $existing = $this->lookupPayout($provider, (string) $transaction->provider_transaction_id);
+            } catch (PayoutOutcomeUnknownException) {
+                return Result::failed('Could not confirm the earlier payout at the provider; nothing was sent. Try Check status later.');
+            }
 
             if ($existing !== null) {
                 $this->applyPayoutUpdate($transaction, $existing, 'sync');
@@ -664,14 +669,34 @@ class WithdrawalWorkflow
         }
 
         $orderId = (string) $transaction->provider_transaction_id;
-        $receipt = $this->lookupPayout($provider, $orderId);
 
-        if ($receipt === null) {
+        try {
+            $receipt = $this->lookupPayout($provider, $orderId);
+        } catch (PayoutOutcomeUnknownException $e) {
             $this->audit($actor, 'withdrawal.sync-payout', $transaction, $transaction->status, $transaction->status, [
-                'order_id' => $orderId, 'found' => false,
+                'order_id' => $orderId, 'found' => false, 'lookup_failed' => true, 'error' => $e->getMessage(),
             ]);
 
-            return Result::failed("No payout found for order {$orderId} at the provider (or the lookup failed).");
+            return Result::failed('The provider lookup failed; try again later.');
+        }
+
+        if ($receipt === null) {
+            $resolved = $this->failUnknownPayoutNotFound($transaction, $orderId);
+
+            $this->audit($actor, 'withdrawal.sync-payout', $resolved ?? $transaction, $transaction->status, $transaction->status, array_merge(
+                ['order_id' => $orderId, 'found' => false],
+                $resolved !== null ? ['resolved' => 'failed'] : [],
+            ));
+
+            if ($resolved !== null) {
+                TransactionLogger::withdrawalPayoutUpdated($resolved->id, PayoutState::Unknown->value, PayoutState::Failed->value, 'not_found', 'sync');
+
+                WithdrawalPayoutFailed::dispatch($resolved, (string) $resolved->metadata['payout_error']);
+
+                return Result::ok('No payout exists at the provider; marked failed so it can be resent or cancelled.', $resolved);
+            }
+
+            return Result::failed("No payout found for order {$orderId} at the provider.");
         }
 
         $from = $transaction->status;
@@ -683,6 +708,62 @@ class WithdrawalWorkflow
         ]);
 
         return Result::ok("Payout status: {$receipt->rawStatus}.", $transaction);
+    }
+
+    /**
+     * An unknown send the provider definitively never received is failed —
+     * the admin's exit to resend or cancel. Only under the row lock, and only
+     * while nothing is sending: a fresh claim means a send may be in flight
+     * right now and its own result decides the state.
+     *
+     * @return Transaction|null the updated row; null when nothing changed
+     */
+    private function failUnknownPayoutNotFound(Transaction $transaction, string $orderId): ?Transaction
+    {
+        $row = DB::transaction(function () use ($transaction, $orderId): ?Transaction {
+            $locked = $this->lockedWithdrawal($transaction);
+
+            if (! $locked
+                || $locked->status !== PaymentStatus::Processing
+                || $locked->payout_state !== PayoutState::Unknown
+                || (string) $locked->provider_transaction_id !== $orderId
+                || $this->transferClaim->hasFreshClaim($locked)) {
+                return null;
+            }
+
+            $metadata = Arr::except($locked->metadata ?? [], [TransferClaim::METADATA_KEY]);
+            $metadata['payout_error'] = "No payout found at the provider for order {$orderId} after an unknown send.";
+
+            $locked->update([
+                'payout_state' => PayoutState::Failed,
+                'metadata' => $metadata,
+            ]);
+
+            return $locked;
+        });
+
+        if ($row !== null && $transaction !== $row) {
+            $transaction->setRawAttributes($row->getAttributes(), true);
+        }
+
+        return $row;
+    }
+
+    /**
+     * A fresh, locked read of the row — the caller's instance may be stale.
+     * Call inside DB::transaction.
+     */
+    private function lockedWithdrawal(Transaction $transaction): ?Transaction
+    {
+        $model = Cashier::transactionModel();
+
+        $locked = $model::query()
+            ->withoutGlobalScopes($model::cashierBypassedScopes())
+            ->whereKey($transaction->getKey())
+            ->lockForUpdate()
+            ->first();
+
+        return $locked && $locked->type === TransactionType::Withdrawal ? $locked : null;
     }
 
     /**
@@ -724,12 +805,20 @@ class WithdrawalWorkflow
         return $provider instanceof SendsPayouts ? $provider : null;
     }
 
+    /**
+     * The payout for this order id, or null only when the provider
+     * definitively has none. A lookup that failed — including a provider that
+     * lets a ConnectionException escape — throws: reading it as "not found"
+     * would resend a payout that may have landed.
+     *
+     * @throws PayoutOutcomeUnknownException
+     */
     private function lookupPayout(SendsPayouts $provider, string $orderId): ?PayoutReceipt
     {
         try {
             return $provider->lookup($orderId);
-        } catch (ConnectionException) {
-            return null;
+        } catch (ConnectionException $e) {
+            throw new PayoutOutcomeUnknownException("Payout lookup failed for order {$orderId}: {$e->getMessage()}", previous: $e);
         }
     }
 

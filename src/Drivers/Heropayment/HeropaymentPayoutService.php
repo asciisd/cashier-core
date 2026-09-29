@@ -180,7 +180,7 @@ final class HeropaymentPayoutService implements SendsPayouts
             if (str_contains(strtolower($message), 'not unique')) {
                 try {
                     $existing = $this->lookup($request->externalOrderId);
-                } catch (ConnectionException $e) {
+                } catch (PayoutOutcomeUnknownException $e) {
                     throw new PayoutOutcomeUnknownException(
                         "Heropayments reports order {$request->externalOrderId} already exists, but it could not be looked up ({$e->getMessage()}).",
                     );
@@ -210,12 +210,34 @@ final class HeropaymentPayoutService implements SendsPayouts
         );
     }
 
+    /**
+     * Tri-state on purpose: a lookup that failed must never read as "not
+     * found", or an unknown payout that landed would be sent a second time.
+     * Only a 404 is "not found" (quirks #14, unverified).
+     */
     public function lookup(string $externalOrderId): ?PayoutReceipt
     {
-        $payload = $this->client->getPaymentByOrderId($externalOrderId);
+        try {
+            $response = $this->client->getPaymentByOrderIdResponse($externalOrderId);
+        } catch (ConnectionException $e) {
+            throw new PayoutOutcomeUnknownException(
+                "Heropayments lookup failed for order {$externalOrderId}: {$e->getMessage()}",
+            );
+        }
+
+        if ($response->status() === 404) {
+            return null;
+        }
+
+        $payload = $response->successful() ? $response->json() : null;
 
         if (! is_array($payload) || (string) ($payload['id'] ?? '') === '') {
-            return null;
+            throw new PayoutOutcomeUnknownException(sprintf(
+                'Heropayments lookup failed for order %s: HTTP %d%s.',
+                $externalOrderId,
+                $response->status(),
+                $response->successful() ? ' without a payment id' : ' '.$this->errorMessage($response),
+            ));
         }
 
         return $this->adapter->payoutReceipt($payload);

@@ -4,7 +4,7 @@ Where the live Heropayments contract departs from its documentation, and where
 the docs are silent. Each entry cites both sides: a passage in a mirror in this
 directory, and a line in this repo.
 
-Six entries are marked **Unverified**: they describe behaviour that may be
+Seven entries are marked **Unverified**: they describe behaviour that may be
 wrong in production, recorded rather than fixed because settling them needs
 production callback logs rather than a document search. Each names what would
 settle it.
@@ -174,3 +174,16 @@ payout-coin units (see `HeropaymentClient::getNetworkFees()`). Compare the
 estimate with the first live payout's `merchantAmountUsdt`. A payout coin whose
 withdrawal fee row is missing, null or non-numeric refuses the payout
 (`quote_unavailable`); it is never estimated as a zero fee.
+
+## 14. An unknown order id is answered with HTTP 404 — **Unverified**
+
+`HeropaymentPayoutService::lookup()` (via
+`HeropaymentClient::getPaymentByOrderIdResponse()`) reads only a 404 from
+`GET /v2/payments/order/{id}` as "no such payout". Any other answer — a 5xx,
+another 4xx, a timeout, a 2xx without an `id` — is "lookup failed" and throws
+`PayoutOutcomeUnknownException`. The docs do not say what the endpoint returns
+for an order it has never seen. Until that is confirmed, a payout whose send
+was unknown stays Unknown (fail-safe: never resent) unless the lookup returns
+404; `WithdrawalWorkflow::syncPayout()` only moves an unknown payout to Failed
+on that 404, and only once its send claim has expired. Confirm with a lookup of
+a made-up order id against production.

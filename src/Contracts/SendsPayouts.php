@@ -36,7 +36,12 @@ interface SendsPayouts
     public function send(PayoutRequest $request): PayoutReceipt;
 
     /**
-     * The payout for our order id, or null when not found or the lookup failed.
+     * The payout for our order id, or null only when the PSP definitively
+     * reports that no payout exists for it. A lookup that failed must never
+     * return null — callers resend on null, and a payout that landed would
+     * be paid twice.
+     *
+     * @throws PayoutOutcomeUnknownException when the lookup itself failed (timeout, 5xx, unreadable answer)
      */
     public function lookup(string $externalOrderId): ?PayoutReceipt;
 
