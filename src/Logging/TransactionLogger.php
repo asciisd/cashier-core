@@ -222,6 +222,46 @@ class TransactionLogger
         ]);
     }
 
+    public static function withdrawalPayoutSent(int|string $adminId, int $transactionId, string $orderId, ?string $reference): void
+    {
+        self::channel()->info('Withdrawal payout sent to provider', [
+            'admin_id' => $adminId,
+            'transaction_id' => $transactionId,
+            'order_id' => $orderId,
+            'payout_reference' => $reference,
+        ]);
+    }
+
+    public static function withdrawalPayoutRejected(int|string $adminId, int $transactionId, string $orderId, string $reason): void
+    {
+        self::channel()->warning('Withdrawal payout rejected by provider', [
+            'admin_id' => $adminId,
+            'transaction_id' => $transactionId,
+            'order_id' => $orderId,
+            'reason' => $reason,
+        ]);
+    }
+
+    public static function withdrawalPayoutOutcomeUnknown(int|string $adminId, int $transactionId, string $orderId, string $error): void
+    {
+        self::channel()->critical('Withdrawal payout outcome unknown - check status before any resend', [
+            'admin_id' => $adminId,
+            'transaction_id' => $transactionId,
+            'order_id' => $orderId,
+            'error' => $error,
+        ]);
+    }
+
+    public static function withdrawalPayoutPreflightRefused(int|string $adminId, int $transactionId, ?string $reason, string $message): void
+    {
+        self::channel()->warning('Withdrawal payout refused before sending', [
+            'admin_id' => $adminId,
+            'transaction_id' => $transactionId,
+            'reason' => $reason,
+            'message' => $message,
+        ]);
+    }
+
     // --- TransferService ---
 
     public static function internalTransferCompleted(

@@ -5,27 +5,41 @@ declare(strict_types=1);
 namespace Asciisd\CashierCore\Withdrawals;
 
 use Asciisd\CashierCore\Cashier;
+use Asciisd\CashierCore\Connections\ConnectionRegistry;
 use Asciisd\CashierCore\Contracts\CustomerContract;
 use Asciisd\CashierCore\Contracts\FundsLedger;
+use Asciisd\CashierCore\Contracts\SendsPayouts;
 use Asciisd\CashierCore\DataObjects\Actor;
+use Asciisd\CashierCore\DataObjects\PayoutPreflight;
+use Asciisd\CashierCore\DataObjects\PayoutReceipt;
+use Asciisd\CashierCore\DataObjects\PayoutRequest;
 use Asciisd\CashierCore\DataObjects\Result;
 use Asciisd\CashierCore\DataObjects\WithdrawalRequestData;
 use Asciisd\CashierCore\Enums\PaymentStatus;
+use Asciisd\CashierCore\Enums\PayoutState;
 use Asciisd\CashierCore\Enums\TransactionType;
 use Asciisd\CashierCore\Events\AdminActionRecorded;
+use Asciisd\CashierCore\Events\PayoutFundsInsufficient;
 use Asciisd\CashierCore\Events\WithdrawalApproved;
 use Asciisd\CashierCore\Events\WithdrawalCancelled;
 use Asciisd\CashierCore\Events\WithdrawalDebitFailed;
 use Asciisd\CashierCore\Events\WithdrawalMarkedPaid;
+use Asciisd\CashierCore\Events\WithdrawalPayoutFailed;
+use Asciisd\CashierCore\Events\WithdrawalPayoutSent;
 use Asciisd\CashierCore\Events\WithdrawalRejected;
 use Asciisd\CashierCore\Events\WithdrawalRequested;
+use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
+use Asciisd\CashierCore\Exceptions\PayoutOutcomeUnknownException;
+use Asciisd\CashierCore\Exceptions\PayoutRejectedException;
 use Asciisd\CashierCore\Logging\TransactionLogger;
 use Asciisd\CashierCore\Models\AdminAction;
 use Asciisd\CashierCore\Models\Transaction;
 use Asciisd\CashierCore\Support\TransferClaim;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 use RuntimeException;
+use Throwable;
 
 /**
  * The withdrawal state machine: submission, approve-first admin review,
@@ -48,6 +62,7 @@ class WithdrawalWorkflow
     public function __construct(
         private readonly FundsLedger $ledger,
         private readonly TransferClaim $transferClaim = new TransferClaim,
+        private readonly ?ConnectionRegistry $connections = null,
     ) {}
 
     /**
@@ -336,14 +351,14 @@ class WithdrawalWorkflow
         $closed = $this->transferClaim->transition(
             $transaction,
             PaymentStatus::Processing,
-            fn (Transaction $locked): array => [
+            fn (Transaction $locked): array => array_merge([
                 'status' => PaymentStatus::Succeeded,
                 'processed_at' => $locked->processed_at ?? now(),
                 'metadata' => array_merge($locked->metadata ?? [], $payoutDetails, [
                     'paid_by_actor_id' => $actor->id,
                     'paid_at' => now()->toIso8601String(),
                 ]),
-            ],
+            ], $locked->payout_state !== null ? ['payout_state' => PayoutState::Paid] : []),
         );
 
         if (! $closed) {
@@ -357,6 +372,270 @@ class WithdrawalWorkflow
         WithdrawalMarkedPaid::dispatch($closed, $actor);
 
         return Result::ok('Withdrawal marked as paid.', $closed);
+    }
+
+    /**
+     * Send a Processing withdrawal's payout through its PSP connection.
+     *
+     * The balance is checked first; a shortfall sends nothing and leaves the
+     * row as it was. A rejection marks the payout failed for an admin to fix
+     * and resend. An ambiguous outcome marks it unknown and keeps the claim,
+     * so nothing — not a resend, not a cancel — acts until it is resolved.
+     * `status` stays Processing throughout; the customer never sees PSP state.
+     */
+    public function sendPayout(Transaction $transaction, Actor $actor): Result
+    {
+        if ($transaction->type !== TransactionType::Withdrawal) {
+            return Result::failed('This action is only for withdrawal transactions.');
+        }
+
+        if ($transaction->status !== PaymentStatus::Processing) {
+            return Result::failed('Only withdrawals in Processing can be sent for payout.');
+        }
+
+        if (! $this->canSendPayout($transaction)) {
+            return Result::failed('This withdrawal has already been sent for payout.');
+        }
+
+        $provider = $this->payoutProvider($transaction);
+
+        if (! $provider) {
+            return Result::failed("The {$transaction->provider} connection cannot send payouts.");
+        }
+
+        // An unknown send may have landed: resolve it before sending anything.
+        if ($transaction->payout_state === PayoutState::Unknown) {
+            $existing = $this->lookupPayout($provider, (string) $transaction->provider_transaction_id);
+
+            if ($existing !== null) {
+                $this->applyPayoutUpdate($transaction, $existing, 'sync');
+
+                return Result::ok('The earlier payout was found at the provider; its status has been applied.', $transaction->refresh());
+            }
+        }
+
+        $claimed = $this->transferClaim->acquire(
+            $transaction,
+            'withdrawal:send-payout',
+            expectedStatus: PaymentStatus::Processing,
+            requireNoTicket: false,
+        );
+
+        if (! $claimed) {
+            return Result::failed('This withdrawal is being processed, or an earlier send is still settling. Try again shortly.');
+        }
+
+        // Re-check under the lock: the caller's instance may be stale.
+        if (! $this->canSendPayout($claimed)) {
+            $this->transferClaim->release($claimed);
+
+            return Result::failed('This withdrawal has already been sent for payout.');
+        }
+
+        // A failed payment still holds its order id at the PSP, so a resend
+        // needs a new one. It is only persisted once a send is attempted.
+        $orderId = $claimed->payout_state === PayoutState::Failed
+            ? $this->nextAttemptId($claimed)
+            : (string) $claimed->provider_transaction_id;
+
+        try {
+            $request = $this->payoutRequest($claimed, $orderId);
+            $preflight = $provider->preflight($request);
+        } catch (PaymentProcessingException $e) {
+            $this->transferClaim->release($claimed);
+
+            return Result::failed($e->getMessage());
+        }
+
+        if (! $preflight->ok) {
+            $this->transferClaim->release($claimed);
+
+            TransactionLogger::withdrawalPayoutPreflightRefused($actor->id, $claimed->id, $preflight->reason, (string) $preflight->message);
+
+            if ($preflight->reason === PayoutPreflight::INSUFFICIENT_FUNDS) {
+                PayoutFundsInsufficient::dispatch(
+                    $claimed,
+                    (string) $preflight->balance,
+                    (string) $preflight->required,
+                    (string) $preflight->walletCurrency,
+                );
+            }
+
+            return Result::failed((string) $preflight->message);
+        }
+
+        try {
+            $receipt = $provider->send($request);
+        } catch (PayoutRejectedException $e) {
+            $this->transferClaim->settle($claimed, $this->withAttempt($claimed, $orderId, [
+                'payout_state' => PayoutState::Failed,
+            ], ['payout_error' => $e->getMessage()]));
+
+            $this->audit($actor, 'withdrawal.send-payout', $claimed, PaymentStatus::Processing, PaymentStatus::Processing, [
+                'outcome' => 'rejected', 'order_id' => $orderId, 'error' => $e->getMessage(),
+            ]);
+
+            TransactionLogger::withdrawalPayoutRejected($actor->id, $claimed->id, $orderId, $e->getMessage());
+
+            WithdrawalPayoutFailed::dispatch($claimed, $e->getMessage());
+
+            return Result::failed('The provider refused the payout: '.$e->getMessage());
+        } catch (PayoutOutcomeUnknownException $e) {
+            return $this->markPayoutOutcomeUnknown($claimed, $actor, $orderId, $e->getMessage());
+        } catch (PaymentProcessingException $e) {
+            $this->transferClaim->release($claimed);
+
+            return Result::failed($e->getMessage());
+        } catch (Throwable $e) {
+            // An unexpected exception after the POST may still have reached the
+            // PSP — treated exactly like an unknown outcome: keep the claim,
+            // block both resend and cancel until it is resolved.
+            return $this->markPayoutOutcomeUnknown($claimed, $actor, $orderId, $e->getMessage());
+        }
+
+        $this->transferClaim->settle($claimed, $this->withAttempt($claimed, $orderId, [
+            'payout_state' => PayoutState::Sent,
+            'payout_reference' => $receipt->reference,
+            'provider_payload' => $receipt->payload,
+        ], ['payout_sent_at' => now()->toIso8601String(), 'payout_error' => null]));
+
+        $this->audit($actor, 'withdrawal.send-payout', $claimed, PaymentStatus::Processing, PaymentStatus::Processing, [
+            'outcome' => 'sent', 'order_id' => $orderId, 'reference' => $receipt->reference,
+        ]);
+
+        TransactionLogger::withdrawalPayoutSent($actor->id, $claimed->id, $orderId, $receipt->reference);
+
+        WithdrawalPayoutSent::dispatch($claimed, $actor);
+
+        // A "not unique" send resolves to the existing payout, which may
+        // already be further along than sent.
+        if ($receipt->state !== PayoutState::Sent) {
+            $this->applyPayoutUpdate($claimed, $receipt, 'sync');
+        }
+
+        return Result::ok('Payout sent.', $claimed->refresh());
+    }
+
+    /**
+     * Stub until Task 6 replaces it with the full implementation.
+     */
+    public function applyPayoutUpdate(Transaction $transaction, PayoutReceipt $receipt, string $source = 'webhook'): bool
+    {
+        return false;
+    }
+
+    /**
+     * Shared handling for a send whose outcome cannot be trusted — a declared
+     * PayoutOutcomeUnknownException, or any other exception raised after the
+     * POST. Either way the payout may have landed at the PSP: keep the claim,
+     * mark the row Unknown, and refuse to resend or cancel until it is
+     * resolved by a lookup, a webhook, or manual review.
+     */
+    private function markPayoutOutcomeUnknown(Transaction $claimed, Actor $actor, string $orderId, string $error): Result
+    {
+        $claimed->update($this->withAttempt($claimed, $orderId, [
+            'payout_state' => PayoutState::Unknown,
+        ], ['payout_error' => $error]));
+
+        $this->audit($actor, 'withdrawal.send-payout', $claimed, PaymentStatus::Processing, PaymentStatus::Processing, [
+            'outcome' => 'unknown', 'order_id' => $orderId, 'error' => $error,
+        ]);
+
+        TransactionLogger::withdrawalPayoutOutcomeUnknown($actor->id, $claimed->id, $orderId, $error);
+
+        return Result::failed('Payout outcome unknown. Do not resend; use Check status, or retry after 10 minutes.');
+    }
+
+    private function canSendPayout(Transaction $transaction): bool
+    {
+        return in_array($transaction->payout_state, [null, PayoutState::Failed, PayoutState::Unknown], true);
+    }
+
+    private function payoutProvider(Transaction $transaction): ?SendsPayouts
+    {
+        try {
+            $provider = ($this->connections ?? app(ConnectionRegistry::class))
+                ->get($transaction->connection ?? $transaction->provider);
+        } catch (Throwable) {
+            return null;
+        }
+
+        return $provider instanceof SendsPayouts ? $provider : null;
+    }
+
+    private function lookupPayout(SendsPayouts $provider, string $orderId): ?PayoutReceipt
+    {
+        try {
+            return $provider->lookup($orderId);
+        } catch (ConnectionException) {
+            return null;
+        }
+    }
+
+    /**
+     * @throws PaymentProcessingException when the host stored no payout destination
+     */
+    private function payoutRequest(Transaction $transaction, string $orderId): PayoutRequest
+    {
+        $details = (array) ($transaction->withdrawal_details ?? []);
+        $address = trim((string) ($details['payout_address'] ?? ''));
+        $currency = trim((string) ($details['payout_currency'] ?? ''));
+
+        if ($address === '' || $currency === '') {
+            throw new PaymentProcessingException('This withdrawal has no payout_address / payout_currency in its details.');
+        }
+
+        $extraId = trim((string) ($details['payout_extra_id'] ?? ''));
+        $email = trim((string) ($details['customer_email'] ?? ''));
+
+        return new PayoutRequest(
+            externalOrderId: $orderId,
+            customerId: (string) ($transaction->metadata['ledger_account'] ?? $transaction->user_id),
+            amount: (string) $transaction->amount,
+            currency: (string) $transaction->currency,
+            payoutCurrency: strtolower($currency),
+            payoutAddress: $address,
+            payoutExtraId: $extraId === '' ? null : $extraId,
+            customerEmail: $email === '' ? null : $email,
+        );
+    }
+
+    /**
+     * WD-<ULID> → WD-<ULID>-2 → WD-<ULID>-3, always from the first attempt's id.
+     */
+    private function nextAttemptId(Transaction $transaction): string
+    {
+        $attempts = $transaction->metadata['payout_attempts'] ?? [];
+        $base = (string) ($attempts[0]['order_id'] ?? $transaction->provider_transaction_id);
+
+        return $base.'-'.(count($attempts) + 2);
+    }
+
+    /**
+     * The attributes for a send outcome; when the attempt used a new order id,
+     * the previous attempt is appended to `payout_attempts` and the row moves
+     * to the new id so callbacks still correlate.
+     *
+     * @param  array<string, mixed>  $attributes
+     * @param  array<string, mixed>  $metadata
+     * @return array<string, mixed>
+     */
+    private function withAttempt(Transaction $transaction, string $orderId, array $attributes, array $metadata): array
+    {
+        $current = $transaction->metadata ?? [];
+
+        if ($orderId !== $transaction->provider_transaction_id) {
+            $current['payout_attempts'] = [...($current['payout_attempts'] ?? []), [
+                'order_id' => $transaction->provider_transaction_id,
+                'state' => $transaction->payout_state?->value,
+                'error' => $current['payout_error'] ?? null,
+                'at' => now()->toIso8601String(),
+            ]];
+
+            $attributes['provider_transaction_id'] = $orderId;
+        }
+
+        return array_merge($attributes, ['metadata' => array_merge($current, $metadata)]);
     }
 
     /**
@@ -374,6 +653,10 @@ class WithdrawalWorkflow
             return Result::failed('This withdrawal can no longer be cancelled.');
         }
 
+        if ($transaction->payout_state?->isInFlight()) {
+            return Result::failed('A payout for this withdrawal is in flight at the provider. Check its status before cancelling.');
+        }
+
         $from = $transaction->status;
         $wasDebited = ! empty($transaction->mt5_ticket_number);
 
@@ -386,6 +669,13 @@ class WithdrawalWorkflow
 
         if (! $claimed) {
             return Result::failed('This withdrawal is currently being processed. Try again shortly.');
+        }
+
+        // Re-check under the lock: a send may have settled since this instance was loaded.
+        if ($claimed->payout_state?->isInFlight()) {
+            $this->transferClaim->release($claimed);
+
+            return Result::failed('A payout for this withdrawal is in flight at the provider. Check its status before cancelling.');
         }
 
         $cancelTicket = null;
