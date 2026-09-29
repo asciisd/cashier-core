@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Asciisd\CashierCore\Models;
 
 use Asciisd\CashierCore\Casts\EncryptedArray;
+use Asciisd\CashierCore\Connections\Connections;
 use Asciisd\CashierCore\Enums\PaymentStatus;
 use Asciisd\CashierCore\Enums\PayoutState;
 use Asciisd\CashierCore\Enums\SettlementMode;
@@ -117,6 +118,18 @@ class Transaction extends Model
     public function shortReference(): string
     {
         return Str::upper(mb_substr((string) $this->reference, -self::SHORT_REFERENCE_LENGTH));
+    }
+
+    /**
+     * The `provider` column as a plain string, whatever the host model casts
+     * it to — a display enum is common (see the class docblock). Never
+     * interpolate or concatenate `$transaction->provider` directly: a
+     * `BackedEnum` cannot be converted to string, and a message, log line, or
+     * actor id built that way throws.
+     */
+    public function providerName(): string
+    {
+        return Connections::normalizeDriver($this->provider) ?? (string) $this->provider;
     }
 
     /**

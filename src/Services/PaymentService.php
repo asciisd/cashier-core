@@ -483,7 +483,7 @@ class PaymentService
      */
     private function driverOf(Transaction $transaction): string
     {
-        return Connections::normalizeDriver($transaction->provider) ?? (string) $transaction->provider;
+        return $transaction->providerName();
     }
 
     /**

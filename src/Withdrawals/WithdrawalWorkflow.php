@@ -402,7 +402,7 @@ class WithdrawalWorkflow
         $provider = $this->payoutProvider($transaction);
 
         if (! $provider) {
-            return Result::failed("The {$transaction->provider} connection cannot send payouts.");
+            return Result::failed("The {$transaction->providerName()} connection cannot send payouts.");
         }
 
         // An unknown send may have landed: resolve it before sending anything.
@@ -639,7 +639,7 @@ class WithdrawalWorkflow
             return true;
         }
 
-        $system = new Actor(id: "system:{$row->provider}", guard: 'system');
+        $system = new Actor(id: "system:{$row->providerName()}", guard: 'system');
 
         if ($row->payout_state === PayoutState::Paid) {
             $this->audit($system, 'withdrawal.payout-paid', $row, PaymentStatus::Processing, PaymentStatus::Succeeded, [
@@ -677,7 +677,7 @@ class WithdrawalWorkflow
         $provider = $this->payoutProvider($transaction);
 
         if (! $provider) {
-            return Result::failed("The {$transaction->provider} connection cannot send payouts.");
+            return Result::failed("The {$transaction->providerName()} connection cannot send payouts.");
         }
 
         $orderId = (string) $transaction->provider_transaction_id;
