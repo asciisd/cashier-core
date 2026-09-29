@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Asciisd\CashierCore\Drivers\Heropayment;
 
 use Asciisd\CashierCore\Support\PspHttp;
+use Illuminate\Http\Client\Response;
 
 class HeropaymentClient
 {
@@ -140,6 +141,42 @@ class HeropaymentClient
     public function getPaymentByOrderId(string $orderId): ?array
     {
         return $this->getSigned("/v2/payments/order/{$orderId}");
+    }
+
+    /**
+     * The merchant balance: one wallet, e.g.
+     * `{walletAddress, walletCurrency: "usdttrc20", balance: "333.80103"}`.
+     * Null on any non-2xx — callers must treat that as "unknown", never "enough".
+     *
+     * @return array<string, mixed>|null
+     */
+    public function getBalance(): ?array
+    {
+        return $this->getSigned('/v2/balance');
+    }
+
+    /**
+     * Create a withdrawal (payout).
+     *
+     * Returns the raw response rather than throwing on an HTTP status: the
+     * caller must tell a clean 4xx rejection (nothing created) from a 5xx or
+     * timeout (it may have been created). Never retried here — a replayed POST
+     * could pay the customer twice. A timeout surfaces as ConnectionException.
+     *
+     * @param  array<string, mixed>  $body
+     */
+    public function createWithdrawal(array $body): Response
+    {
+        $json = $this->encodePayload($body);
+
+        return PspHttp::client()->withHeaders([
+            'x-api-key' => $this->apiKey,
+            'x-api-sign' => $this->sign($json),
+        ])
+            ->withBody($json, 'application/json')
+            ->acceptJson()
+            ->timeout(30)
+            ->post($this->baseUrl.'/v2/withdrawal');
     }
 
     /**
