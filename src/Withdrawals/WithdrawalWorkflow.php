@@ -440,7 +440,8 @@ class WithdrawalWorkflow
         }
 
         // A failed payment still holds its order id at the PSP, so a resend
-        // needs a new one. It is only persisted once a send is attempted.
+        // needs a new one. It is persisted only once the preflight passes,
+        // immediately before the POST.
         $orderId = $claimed->payout_state === PayoutState::Failed
             ? $this->nextAttemptId($claimed)
             : (string) $claimed->provider_transaction_id;
@@ -477,12 +478,18 @@ class WithdrawalWorkflow
             return Result::failed((string) $preflight->message);
         }
 
+        // Saved before the POST, so a callback for the new id finds the row
+        // (and waits on the claim) even when it beats the create response.
+        if ($orderId !== (string) $claimed->provider_transaction_id) {
+            $this->recordAttempt($claimed, $orderId);
+        }
+
         try {
             $receipt = $provider->send($request);
         } catch (PayoutRejectedException $e) {
-            $this->transferClaim->settle($claimed, $this->withAttempt($claimed, $orderId, [
+            $written = $this->writeSendOutcome($claimed, 'rejected', [
                 'payout_state' => PayoutState::Failed,
-            ], ['payout_error' => $e->getMessage()]));
+            ], ['payout_error' => $e->getMessage()], keepClaim: false);
 
             $this->audit($actor, 'withdrawal.send-payout', $claimed, PaymentStatus::Processing, PaymentStatus::Processing, [
                 'outcome' => 'rejected', 'order_id' => $orderId, 'error' => $e->getMessage(),
@@ -490,7 +497,9 @@ class WithdrawalWorkflow
 
             TransactionLogger::withdrawalPayoutRejected($actor->id, $claimed->id, $orderId, $e->getMessage());
 
-            WithdrawalPayoutFailed::dispatch($claimed, $e->getMessage());
+            if ($written) {
+                WithdrawalPayoutFailed::dispatch($claimed, $e->getMessage());
+            }
 
             return Result::failed('The provider refused the payout: '.$e->getMessage());
         } catch (PayoutOutcomeUnknownException $e) {
@@ -506,11 +515,11 @@ class WithdrawalWorkflow
             return $this->markPayoutOutcomeUnknown($claimed, $actor, $orderId, $e->getMessage());
         }
 
-        $this->transferClaim->settle($claimed, $this->withAttempt($claimed, $orderId, [
+        $written = $this->writeSendOutcome($claimed, 'sent', [
             'payout_state' => PayoutState::Sent,
             'payout_reference' => $receipt->reference,
             'provider_payload' => $receipt->payload,
-        ], ['payout_sent_at' => now()->toIso8601String(), 'payout_error' => null]));
+        ], ['payout_sent_at' => now()->toIso8601String(), 'payout_error' => null], keepClaim: false);
 
         $this->audit($actor, 'withdrawal.send-payout', $claimed, PaymentStatus::Processing, PaymentStatus::Processing, [
             'outcome' => 'sent', 'order_id' => $orderId, 'reference' => $receipt->reference,
@@ -518,7 +527,11 @@ class WithdrawalWorkflow
 
         TransactionLogger::withdrawalPayoutSent($actor->id, $claimed->id, $orderId, $receipt->reference);
 
-        WithdrawalPayoutSent::dispatch($claimed, $actor);
+        // Not announced when a callback already closed the row mid-send: the
+        // customer has had WithdrawalMarkedPaid, and "sent" would follow it.
+        if ($written) {
+            WithdrawalPayoutSent::dispatch($claimed, $actor);
+        }
 
         // A "not unique" send resolves to the existing payout, which may
         // already be further along than sent.
@@ -542,17 +555,11 @@ class WithdrawalWorkflow
      */
     public function applyPayoutUpdate(Transaction $transaction, PayoutReceipt $receipt, string $source = 'webhook'): bool
     {
-        $model = Cashier::transactionModel();
-
         /** @var array{0: Transaction, 1: ?PayoutState}|null $applied */
-        $applied = DB::transaction(function () use ($model, $transaction, $receipt, $source): ?array {
-            $locked = $model::query()
-                ->withoutGlobalScopes($model::cashierBypassedScopes())
-                ->whereKey($transaction->getKey())
-                ->lockForUpdate()
-                ->first();
+        $applied = DB::transaction(function () use ($transaction, $receipt, $source): ?array {
+            $locked = $this->lockedWithdrawal($transaction);
 
-            if (! $locked || $locked->type !== TransactionType::Withdrawal) {
+            if (! $locked) {
                 return null;
             }
 
@@ -775,9 +782,9 @@ class WithdrawalWorkflow
      */
     private function markPayoutOutcomeUnknown(Transaction $claimed, Actor $actor, string $orderId, string $error): Result
     {
-        $claimed->update($this->withAttempt($claimed, $orderId, [
+        $this->writeSendOutcome($claimed, 'unknown', [
             'payout_state' => PayoutState::Unknown,
-        ], ['payout_error' => $error]));
+        ], ['payout_error' => $error], keepClaim: true);
 
         $this->audit($actor, 'withdrawal.send-payout', $claimed, PaymentStatus::Processing, PaymentStatus::Processing, [
             'outcome' => 'unknown', 'order_id' => $orderId, 'error' => $error,
@@ -786,6 +793,78 @@ class WithdrawalWorkflow
         TransactionLogger::withdrawalPayoutOutcomeUnknown($actor->id, $claimed->id, $orderId, $error);
 
         return Result::failed('Payout outcome unknown. Do not resend; use Check status, or retry after 10 minutes.');
+    }
+
+    /**
+     * Persist a resend's new order id — and the attempt it replaces — under
+     * the row lock, keeping the send claim. Refreshes `$claimed` in place.
+     */
+    private function recordAttempt(Transaction $claimed, string $orderId): void
+    {
+        $row = DB::transaction(function () use ($claimed, $orderId): ?Transaction {
+            $locked = $this->lockedWithdrawal($claimed);
+
+            if (! $locked) {
+                return null;
+            }
+
+            $locked->update($this->withAttempt($locked, $orderId, [], []));
+
+            return $locked;
+        });
+
+        if ($row !== null) {
+            $claimed->setRawAttributes($row->getAttributes(), true);
+        }
+    }
+
+    /**
+     * Write a send's outcome onto a freshly locked row, merging into its
+     * current metadata rather than the copy read before the POST — a
+     * callback may have landed in between. A row that is already Paid or no
+     * longer Processing is left alone. Refreshes `$claimed` in place.
+     *
+     * @param  string  $outcome  `sent`, `rejected` or `unknown` — for the log
+     * @param  array<string, mixed>  $attributes
+     * @param  array<string, mixed>  $metadata
+     * @param  bool  $keepClaim  true for an unknown outcome: the claim blocks resend and cancel
+     * @return bool whether the row was written
+     */
+    private function writeSendOutcome(Transaction $claimed, string $outcome, array $attributes, array $metadata, bool $keepClaim): bool
+    {
+        $row = DB::transaction(function () use ($claimed, $outcome, $attributes, $metadata, $keepClaim): ?Transaction {
+            $locked = $this->lockedWithdrawal($claimed);
+
+            if (! $locked) {
+                return null;
+            }
+
+            if ($locked->payout_state === PayoutState::Paid || $locked->status !== PaymentStatus::Processing) {
+                TransactionLogger::withdrawalPayoutUpdateIgnored($locked->id, $locked->status->value, $locked->payout_state?->value, $outcome, 'send');
+
+                $claimed->setRawAttributes($locked->getAttributes(), true);
+
+                return null;
+            }
+
+            $merged = array_merge($locked->metadata ?? [], $metadata);
+
+            if (! $keepClaim) {
+                unset($merged[TransferClaim::METADATA_KEY]);
+            }
+
+            $locked->update(array_merge($attributes, ['metadata' => $merged]));
+
+            return $locked;
+        });
+
+        if ($row === null) {
+            return false;
+        }
+
+        $claimed->setRawAttributes($row->getAttributes(), true);
+
+        return true;
     }
 
     private function canSendPayout(Transaction $transaction): bool
@@ -862,9 +941,10 @@ class WithdrawalWorkflow
     }
 
     /**
-     * The attributes for a send outcome; when the attempt used a new order id,
-     * the previous attempt is appended to `payout_attempts` and the row moves
-     * to the new id so callbacks still correlate.
+     * The attributes for a new send attempt (see recordAttempt()); when the
+     * attempt uses a new order id, the previous attempt is appended to
+     * `payout_attempts` and the row moves to the new id so callbacks still
+     * correlate.
      *
      * @param  array<string, mixed>  $attributes
      * @param  array<string, mixed>  $metadata

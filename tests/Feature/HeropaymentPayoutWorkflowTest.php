@@ -551,3 +551,71 @@ it('leaves an unknown payout alone on a not-found while its send claim is fresh'
 
     Event::assertNotDispatched(WithdrawalPayoutFailed::class);
 });
+
+// --- Final-3: locked post-send writes; the attempt id is saved before the POST --
+
+it('does not overwrite a payout that was paid while the send was in flight', function () {
+    Event::fake([WithdrawalPayoutSent::class]);
+
+    $transaction = hpWithdrawal();
+
+    HeropaymentPayoutApi::fake(['withdrawal' => function () use ($transaction) {
+        // Heropayments calls back before the create response returns.
+        hpWorkflow()->applyPayoutUpdate(Transaction::query()->findOrFail($transaction->id), hpReceipt('finished', ['outcomeHash' => '0xabc']));
+
+        return Http::response(HeropaymentPayoutApi::withdrawal());
+    }]);
+
+    $result = hpWorkflow()->sendPayout($transaction, hpActor());
+    $fresh = $transaction->fresh();
+
+    expect($result->ok)->toBeTrue()
+        ->and($fresh->status)->toBe(PaymentStatus::Succeeded)
+        ->and($fresh->payout_state)->toBe(PayoutState::Paid)
+        ->and($fresh->metadata['payout_outcome']['outcomeHash'])->toBe('0xabc')
+        ->and($fresh->metadata)->toHaveKey('paid_at')
+        ->and($fresh->metadata)->not->toHaveKey(TransferClaim::METADATA_KEY);
+
+    Event::assertNotDispatched(WithdrawalPayoutSent::class);
+});
+
+it('does not overwrite a paid payout when a send outcome turns out unknown', function () {
+    $transaction = hpWithdrawal();
+
+    HeropaymentPayoutApi::fake(['withdrawal' => function () use ($transaction) {
+        hpWorkflow()->applyPayoutUpdate(Transaction::query()->findOrFail($transaction->id), hpReceipt('finished'));
+
+        throw new ConnectionException('cURL error 28: timed out');
+    }]);
+
+    hpWorkflow()->sendPayout($transaction, hpActor());
+
+    expect($transaction->fresh()->payout_state)->toBe(PayoutState::Paid)
+        ->and($transaction->fresh()->status)->toBe(PaymentStatus::Succeeded);
+});
+
+it('saves the new attempt id before the resend is posted', function () {
+    $transaction = hpWithdrawal([
+        'payout_state' => PayoutState::Failed,
+        'metadata' => ['ledger_account' => 70001, 'payout_error' => 'Payout address not valid'],
+    ]);
+
+    $inFlight = null;
+
+    HeropaymentPayoutApi::fake(['withdrawal' => function () use ($transaction, &$inFlight) {
+        $inFlight = Transaction::query()->findOrFail($transaction->id);
+
+        return Http::response(HeropaymentPayoutApi::withdrawal(['externalOrderId' => 'WD-01TEST-2']));
+    }]);
+
+    expect(hpWorkflow()->sendPayout($transaction, hpActor())->ok)->toBeTrue()
+        ->and($inFlight?->provider_transaction_id)->toBe('WD-01TEST-2')
+        ->and($inFlight?->metadata['payout_attempts'][0]['order_id'])->toBe('WD-01TEST')
+        ->and($inFlight?->metadata)->toHaveKey(TransferClaim::METADATA_KEY);
+
+    $fresh = $transaction->fresh();
+
+    expect($fresh->provider_transaction_id)->toBe('WD-01TEST-2')
+        ->and($fresh->payout_state)->toBe(PayoutState::Sent)
+        ->and($fresh->metadata['payout_attempts'])->toHaveCount(1);
+});
