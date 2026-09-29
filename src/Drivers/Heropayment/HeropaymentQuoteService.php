@@ -22,6 +22,8 @@ final class HeropaymentQuoteService
 {
     private const DEPOSIT = 'deposit';
 
+    private const WITHDRAWAL = 'withdrawal';
+
     /**
      * @param  array<string, mixed>  $config
      */
@@ -122,13 +124,16 @@ final class HeropaymentQuoteService
 
     /**
      * Spot rate: units of $to per 1 unit of $from. Null when unavailable.
+     *
+     * Heropayments quotes deposits and withdrawals separately, so the type is
+     * part of both the request and the cache key.
      */
-    public function rate(string $from, string $to): ?float
+    public function rate(string $from, string $to, string $transactionType = self::DEPOSIT): ?float
     {
         $payload = $this->remember(
-            "rate:{$from}:{$to}",
+            "rate:{$transactionType}:{$from}:{$to}",
             $this->quoteTtl(),
-            fn () => $this->client->getRate($from, $to, self::DEPOSIT),
+            fn () => $this->client->getRate($from, $to, $transactionType),
         );
 
         return isset($payload['rate']) ? (float) $payload['rate'] : null;
@@ -149,18 +154,51 @@ final class HeropaymentQuoteService
     }
 
     /**
+     * Minimum withdrawal for a ticker, in that ticker's own units. Null when unavailable.
+     */
+    public function minWithdrawal(string $currency): ?float
+    {
+        $payload = $this->remember(
+            "min-amount:{$currency}",
+            $this->referenceTtl(),
+            fn () => $this->client->getMinAmount(currency: $currency),
+        );
+
+        return isset($payload['minWithdrawal']) ? (float) $payload['minWithdrawal'] : null;
+    }
+
+    /**
      * Deposit network fees keyed by lowercased ticker, in native currency units.
      *
      * @return array<string, float>
      */
     public function depositNetworkFees(): array
     {
+        return $this->networkFees(self::DEPOSIT);
+    }
+
+    /**
+     * Withdrawal network fees keyed by lowercased ticker, in native currency
+     * units (see HeropaymentClient::getNetworkFees() on why not USDT).
+     *
+     * @return array<string, float>
+     */
+    public function withdrawalNetworkFees(): array
+    {
+        return $this->networkFees(self::WITHDRAWAL);
+    }
+
+    /**
+     * @return array<string, float>
+     */
+    private function networkFees(string $type): array
+    {
         $rows = $this->remember('network-fees', $this->referenceTtl(), fn () => $this->client->getNetworkFees()) ?? [];
 
         $fees = [];
 
         foreach ($rows as $row) {
-            if (($row['type'] ?? null) !== self::DEPOSIT) {
+            if (($row['type'] ?? null) !== $type) {
                 continue;
             }
 
