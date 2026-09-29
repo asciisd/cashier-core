@@ -6,6 +6,7 @@ namespace Asciisd\CashierCore\Models;
 
 use Asciisd\CashierCore\Casts\EncryptedArray;
 use Asciisd\CashierCore\Enums\PaymentStatus;
+use Asciisd\CashierCore\Enums\PayoutState;
 use Asciisd\CashierCore\Enums\SettlementMode;
 use Asciisd\CashierCore\Enums\TransactionType;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
@@ -44,6 +45,7 @@ class Transaction extends Model
         'payment_method_type', 'payment_method_brand', 'payment_method_last_four', 'payment_method_display_name',
         'deposit_proof_path', 'mt5_ticket_number', 'executed_at',
         'error_code', 'error_message', 'processed_at', 'failed_at',
+        'payout_state', 'payout_reference',
     ];
 
     protected $hidden = [
@@ -77,6 +79,7 @@ class Transaction extends Model
             'status' => PaymentStatus::class,
             'type' => TransactionType::class,
             'settlement_mode' => SettlementMode::class,
+            'payout_state' => PayoutState::class,
             'is_ftd' => 'boolean',
             'amount' => 'decimal:2',
             'conversion_rate' => 'decimal:8',
