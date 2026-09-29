@@ -9,8 +9,11 @@ use Asciisd\CashierCore\DataObjects\PayoutPreflight;
 use Asciisd\CashierCore\DataObjects\PayoutReceipt;
 use Asciisd\CashierCore\DataObjects\PayoutRequest;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
+use Asciisd\CashierCore\Exceptions\PayoutOutcomeUnknownException;
+use Asciisd\CashierCore\Exceptions\PayoutRejectedException;
 use Illuminate\Http\Client\ConnectionException;
-use LogicException;
+use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Route;
 
 /**
  * Heropayments V2 withdrawals (payouts).
@@ -40,6 +43,8 @@ final class HeropaymentPayoutService implements SendsPayouts
 
     private HeropaymentQuoteService $quotes;
 
+    private HeropaymentAdapter $adapter;
+
     /**
      * @param  array<string, mixed>  $config  a `cashier-core.connections.heropayment` array
      */
@@ -50,6 +55,7 @@ final class HeropaymentPayoutService implements SendsPayouts
     ) {
         $this->client = $client ?? HeropaymentClient::fromConfig($config);
         $this->quotes = $quotes ?? new HeropaymentQuoteService($this->client, $config);
+        $this->adapter = new HeropaymentAdapter;
     }
 
     public function preflight(PayoutRequest $request): PayoutPreflight
@@ -124,17 +130,134 @@ final class HeropaymentPayoutService implements SendsPayouts
 
     public function send(PayoutRequest $request): PayoutReceipt
     {
-        throw new LogicException('Implemented in Task 4.');
+        $amount = $this->guard($request);
+        $callbackUrl = $this->callbackUrl();
+
+        $body = array_filter([
+            'customerId' => $request->customerId,
+            'payoutAddress' => trim($request->payoutAddress),
+            'payoutCurrency' => strtolower(trim($request->payoutCurrency)),
+            'priceCurrency' => strtolower($request->currency),
+            'priceAmount' => $amount,
+            'payoutExtraId' => $request->payoutExtraId,
+            'customerEmail' => $request->customerEmail,
+            'externalOrderId' => $request->externalOrderId,
+            'callbackUrl' => $callbackUrl,
+        ], fn ($value) => $value !== null && $value !== '');
+
+        // The withdrawal is priced in the account's fiat currency.
+        $body['fiat'] = true;
+
+        try {
+            $response = $this->client->createWithdrawal($body);
+        } catch (ConnectionException $e) {
+            throw new PayoutOutcomeUnknownException(
+                "Heropayments did not answer the withdrawal request ({$e->getMessage()}). "
+                .'It may have been created — do not resend before checking its status.',
+            );
+        }
+
+        if ($response->successful()) {
+            $payload = (array) $response->json();
+
+            // The id is the only handle on the payout. A 2xx without one is as
+            // ambiguous as a 5xx, not a success.
+            if ((string) ($payload['id'] ?? '') === '') {
+                throw new PayoutOutcomeUnknownException(
+                    'Heropayments accepted the withdrawal but returned no payment id. '
+                    .'It may have been created — do not resend before checking its status.',
+                );
+            }
+
+            return $this->adapter->payoutReceipt($payload);
+        }
+
+        $message = $this->errorMessage($response);
+
+        if ($response->clientError()) {
+            // externalOrderId is unique per merchant: "not unique" means an
+            // earlier attempt with this id landed. Resolve it, never resend.
+            if (str_contains(strtolower($message), 'not unique')) {
+                try {
+                    $existing = $this->lookup($request->externalOrderId);
+                } catch (ConnectionException $e) {
+                    throw new PayoutOutcomeUnknownException(
+                        "Heropayments reports order {$request->externalOrderId} already exists, but it could not be looked up ({$e->getMessage()}).",
+                    );
+                }
+
+                if ($existing !== null) {
+                    return $existing;
+                }
+
+                throw new PayoutOutcomeUnknownException(
+                    "Heropayments reports order {$request->externalOrderId} already exists, but it could not be looked up.",
+                );
+            }
+
+            throw new PayoutRejectedException($message);
+        }
+
+        // errors.md: on "timeout of 15000ms exceeded" and "internal server
+        // error", check whether the withdrawal was created. Every 5xx is
+        // treated that way — the lookup resolves the ones that were rejections.
+        throw new PayoutOutcomeUnknownException(
+            sprintf(
+                'Heropayments returned %d for the withdrawal request: %s. It may have been created — do not resend before checking its status.',
+                $response->status(),
+                $message,
+            ),
+        );
     }
 
     public function lookup(string $externalOrderId): ?PayoutReceipt
     {
-        throw new LogicException('Implemented in Task 4.');
+        $payload = $this->client->getPaymentByOrderId($externalOrderId);
+
+        if (! is_array($payload) || (string) ($payload['id'] ?? '') === '') {
+            return null;
+        }
+
+        return $this->adapter->payoutReceipt($payload);
     }
 
     public function parsePayoutWebhook(array $payload): PayoutReceipt
     {
-        throw new LogicException('Implemented in Task 4.');
+        return $this->adapter->payoutReceipt($payload);
+    }
+
+    /**
+     * Payouts are closed by callback, so a send without one is refused.
+     * Falls back to the package's own webhook route under its configured
+     * name prefix.
+     */
+    private function callbackUrl(): string
+    {
+        $route = config('cashier-core.routes.name_prefix', 'cashier.webhooks.').'heropayment';
+
+        $url = $this->config['webhook_url'] ?? (Route::has($route) ? route($route) : null);
+
+        if ($url === null || $url === '') {
+            throw new PaymentProcessingException(
+                'Heropayment withdrawals need a callback URL: set webhook_url or register the package webhook routes.',
+            );
+        }
+
+        return (string) $url;
+    }
+
+    private function errorMessage(Response $response): string
+    {
+        $json = $response->json();
+        $message = is_array($json) ? ($json['message'] ?? $json['error'] ?? null) : null;
+
+        if (is_array($message)) {
+            $message = implode('; ', array_map('strval', $message));
+        }
+
+        $message = trim((string) ($message ?? $response->body()));
+
+        return $message === '' ? "HTTP {$response->status()}" : $message;
     }
 
     /**

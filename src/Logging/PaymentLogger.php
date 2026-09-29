@@ -669,6 +669,15 @@ class PaymentLogger
         ]);
     }
 
+    public static function providerPayoutStatusUnrecognised(string $provider, string $orderId, string $status): void
+    {
+        self::channel()->warning('Unrecognised payout status; treated as still in flight', [
+            'provider' => $provider,
+            'order_id' => $orderId,
+            'status' => $status,
+        ]);
+    }
+
     public static function providerWebhookRelayed(string $provider, string $url, int $httpStatus): void
     {
         self::channel()->info('Provider webhook relayed', [

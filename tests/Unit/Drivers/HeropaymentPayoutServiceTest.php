@@ -5,10 +5,15 @@ declare(strict_types=1);
 use Asciisd\CashierCore\DataObjects\PayoutPreflight;
 use Asciisd\CashierCore\DataObjects\PayoutRequest;
 use Asciisd\CashierCore\Drivers\Heropayment\HeropaymentPayoutService;
+use Asciisd\CashierCore\Enums\PayoutState;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
+use Asciisd\CashierCore\Exceptions\PayoutOutcomeUnknownException;
+use Asciisd\CashierCore\Exceptions\PayoutRejectedException;
 use Asciisd\CashierCore\Tests\Fixtures\HeropaymentPayoutApi;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 
 beforeEach(function () {
     Cache::flush();
@@ -166,3 +171,141 @@ it('refuses a malformed balance string instead of crashing', function (string $b
     'scientific' => ['2.5e1'],
     'negative' => ['-5'],
 ]);
+
+// --- send ------------------------------------------------------------------
+
+it('sends the V2 withdrawal body and returns a receipt', function () {
+    HeropaymentPayoutApi::fake();
+
+    $receipt = hpService()->send(hpRequest(['payoutExtraId' => 'memo-1', 'customerEmail' => 'c@example.com']));
+
+    expect($receipt->reference)->toBe('hero-wd-1')
+        ->and($receipt->state)->toBe(PayoutState::Sent);
+
+    Http::assertSent(function (Request $request) {
+        if (! str_ends_with($request->url(), '/v2/withdrawal')) {
+            return false;
+        }
+
+        return $request->data() === [
+            'customerId' => '70001',
+            'payoutAddress' => 'TXyzCustomer',
+            'payoutCurrency' => 'usdttrc20',
+            'priceCurrency' => 'usd',
+            'priceAmount' => '100.00',
+            'payoutExtraId' => 'memo-1',
+            'customerEmail' => 'c@example.com',
+            'externalOrderId' => 'WD-01TEST',
+            'callbackUrl' => 'https://members.example.com/api/webhooks/heropayment',
+            'fiat' => true,
+        ];
+    });
+});
+
+it('omits empty optional fields', function () {
+    HeropaymentPayoutApi::fake();
+
+    hpService()->send(hpRequest());
+
+    Http::assertSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal')
+        && ! array_key_exists('payoutExtraId', $request->data())
+        && ! array_key_exists('customerEmail', $request->data()));
+});
+
+it('falls back to the package webhook route under its configured name prefix', function () {
+    // The package routes are registered in tests as cashier.webhooks.heropayment.
+    // The deposit path looks up `webhooks.heropayment`, which never matches —
+    // the payout path must not repeat that.
+    HeropaymentPayoutApi::fake();
+
+    hpService(['webhook_url' => null])->send(hpRequest());
+
+    Http::assertSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal')
+        && str_ends_with((string) $request['callbackUrl'], '/api/webhooks/heropayment'));
+});
+
+it('refuses to send when no callback URL resolves', function () {
+    HeropaymentPayoutApi::fake();
+    config()->set('cashier-core.routes.name_prefix', 'not-registered.');
+
+    expect(fn () => hpService(['webhook_url' => null])->send(hpRequest()))
+        ->toThrow(\Asciisd\CashierCore\Exceptions\PaymentProcessingException::class, 'callback URL');
+
+    Http::assertNotSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal'));
+});
+
+it('treats a 4xx as a clean rejection carrying Heropayments message', function () {
+    HeropaymentPayoutApi::fake(['withdrawal' => Http::response(['message' => 'Payout address not valid'], 400)]);
+
+    expect(fn () => hpService()->send(hpRequest()))
+        ->toThrow(PayoutRejectedException::class, 'Payout address not valid');
+});
+
+it('resolves a not-unique rejection by looking the payout up', function () {
+    HeropaymentPayoutApi::fake([
+        'withdrawal' => Http::response(['message' => 'Field externalOrderId for this user is not unique'], 400),
+        'lookup' => Http::response(HeropaymentPayoutApi::withdrawal(['status' => 'sending'])),
+    ]);
+
+    $receipt = hpService()->send(hpRequest());
+
+    expect($receipt->reference)->toBe('hero-wd-1')
+        ->and($receipt->rawStatus)->toBe('sending');
+});
+
+it('reports unknown when not-unique cannot be looked up', function () {
+    HeropaymentPayoutApi::fake([
+        'withdrawal' => Http::response(['message' => 'Field externalOrderId for this user is not unique'], 400),
+    ]);
+
+    expect(fn () => hpService()->send(hpRequest()))->toThrow(PayoutOutcomeUnknownException::class);
+});
+
+it('reports unknown when not-unique cannot be looked up because the lookup times out', function () {
+    // Ruling: lookup() -> getPaymentByOrderId() can throw ConnectionException on
+    // a timeout. The not-unique branch in send() must catch that and report it
+    // the same way as any other unresolved not-unique rejection, never let the
+    // ConnectionException escape uncaught.
+    HeropaymentPayoutApi::fake([
+        'withdrawal' => Http::response(['message' => 'Field externalOrderId for this user is not unique'], 400),
+        'lookup' => fn () => throw new ConnectionException('cURL error 28: timed out'),
+    ]);
+
+    expect(fn () => hpService()->send(hpRequest()))->toThrow(PayoutOutcomeUnknownException::class);
+});
+
+it('reports unknown on a 5xx, a timeout, or a 2xx without an id', function (mixed $answer) {
+    HeropaymentPayoutApi::fake(['withdrawal' => $answer]);
+
+    expect(fn () => hpService()->send(hpRequest()))->toThrow(PayoutOutcomeUnknownException::class);
+})->with([
+    '500' => fn () => Http::response(['message' => 'internal server error'], 500),
+    'timeout' => fn () => fn () => throw new ConnectionException('cURL error 28: timed out'),
+    '200 no id' => fn () => Http::response(['status' => 'waiting']),
+]);
+
+it('checks config and input before sending', function () {
+    HeropaymentPayoutApi::fake();
+
+    expect(fn () => hpService(['withdrawals_enabled' => false])->send(hpRequest()))
+        ->toThrow(\Asciisd\CashierCore\Exceptions\PaymentProcessingException::class);
+
+    Http::assertNothingSent();
+});
+
+// --- lookup ------------------------------------------------------------------
+
+it('looks a payout up by order id', function () {
+    HeropaymentPayoutApi::fake(['lookup' => Http::response(HeropaymentPayoutApi::withdrawal(['status' => 'finished']))]);
+
+    $receipt = hpService()->lookup('WD-01TEST');
+
+    expect($receipt?->state)->toBe(PayoutState::Paid);
+    Http::assertSent(fn (Request $request) => str_ends_with($request->url(), '/v2/payments/order/WD-01TEST'));
+});
+
+it('returns null when the lookup finds nothing', function () {
+    HeropaymentPayoutApi::fake();
+
+    expect(hpService()->lookup('WD-01TEST'))->toBeNull();
+});
