@@ -36,7 +36,9 @@ use Asciisd\CashierCore\Models\AdminAction;
 use Asciisd\CashierCore\Models\Transaction;
 use Asciisd\CashierCore\Support\TransferClaim;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
@@ -523,11 +525,155 @@ class WithdrawalWorkflow
     }
 
     /**
-     * Stub until Task 6 replaces it with the full implementation.
+     * Apply what the PSP reports about a payout — from a callback, a lookup,
+     * or a send that resolved to an existing payout.
+     *
+     * `finished` closes the withdrawal as Succeeded and announces it exactly
+     * like a manual markPaid(). `failed`/`refunded` leave it Processing for an
+     * admin. Paid is final; a closed withdrawal is never reopened.
+     *
+     * @param  string  $source  `webhook` or `sync`
+     * @return bool whether the row changed
      */
     public function applyPayoutUpdate(Transaction $transaction, PayoutReceipt $receipt, string $source = 'webhook'): bool
     {
-        return false;
+        $model = Cashier::transactionModel();
+
+        /** @var array{0: Transaction, 1: ?PayoutState}|null $applied */
+        $applied = DB::transaction(function () use ($model, $transaction, $receipt, $source): ?array {
+            $locked = $model::query()
+                ->withoutGlobalScopes($model::cashierBypassedScopes())
+                ->whereKey($transaction->getKey())
+                ->lockForUpdate()
+                ->first();
+
+            if (! $locked || $locked->type !== TransactionType::Withdrawal) {
+                return null;
+            }
+
+            if ($locked->payout_state === PayoutState::Paid || $locked->status !== PaymentStatus::Processing) {
+                if ($receipt->state === PayoutState::Paid && $locked->status !== PaymentStatus::Succeeded) {
+                    TransactionLogger::withdrawalPaidAfterCancellation($locked->id, $locked->status->value, (string) $locked->provider_transaction_id);
+                } else {
+                    TransactionLogger::withdrawalPayoutUpdateIgnored($locked->id, $locked->status->value, $locked->payout_state?->value, $receipt->rawStatus, $source);
+                }
+
+                return null;
+            }
+
+            $from = $locked->payout_state;
+
+            // Any write here also drops a leftover send claim: once the PSP has
+            // answered, an unknown send is resolved and must not stay locked.
+            $metadata = Arr::except($locked->metadata ?? [], [TransferClaim::METADATA_KEY]);
+
+            $attributes = [
+                'payout_state' => $receipt->state,
+                'provider_payload' => $receipt->payload,
+            ];
+
+            if ($receipt->reference !== null) {
+                $attributes['payout_reference'] = $receipt->reference;
+            }
+
+            if ($receipt->state === PayoutState::Paid) {
+                $attributes['status'] = PaymentStatus::Succeeded;
+                $attributes['processed_at'] = $locked->processed_at ?? now();
+                $metadata['payout_outcome'] = Arr::only($receipt->payload, [
+                    'outcomeHash', 'outcomeHashLink', 'outcomeAmount', 'outcomeCurrency',
+                    'merchantAmountUsdt', 'feePercent', 'networkFee',
+                ]);
+                $metadata['paid_at'] = now()->toIso8601String();
+            }
+
+            if ($receipt->state === PayoutState::Failed) {
+                $metadata['payout_error'] = $receipt->error;
+            }
+
+            $attributes['metadata'] = $metadata;
+
+            $locked->update($attributes);
+
+            return [$locked, $from];
+        });
+
+        if ($applied === null) {
+            return false;
+        }
+
+        [$row, $from] = $applied;
+
+        if ($transaction !== $row) {
+            $transaction->setRawAttributes($row->getAttributes(), true);
+        }
+
+        TransactionLogger::withdrawalPayoutUpdated($row->id, $from?->value, $row->payout_state->value, $receipt->rawStatus, $source);
+
+        if ($from === $row->payout_state) {
+            return true;
+        }
+
+        $system = new Actor(id: "system:{$row->provider}", guard: 'system');
+
+        if ($row->payout_state === PayoutState::Paid) {
+            $this->audit($system, 'withdrawal.payout-paid', $row, PaymentStatus::Processing, PaymentStatus::Succeeded, [
+                'source' => $source, 'reference' => $row->payout_reference,
+            ]);
+
+            WithdrawalMarkedPaid::dispatch($row, $system);
+        }
+
+        if ($row->payout_state === PayoutState::Failed) {
+            $this->audit($system, 'withdrawal.payout-failed', $row, PaymentStatus::Processing, PaymentStatus::Processing, [
+                'source' => $source, 'error' => $receipt->error,
+            ]);
+
+            WithdrawalPayoutFailed::dispatch($row, (string) $receipt->error);
+        }
+
+        return true;
+    }
+
+    /**
+     * Ask the PSP for a sent or unknown payout's status and apply it — the
+     * admin "check status" action, and the fallback when callbacks stop.
+     */
+    public function syncPayout(Transaction $transaction, Actor $actor): Result
+    {
+        if ($transaction->type !== TransactionType::Withdrawal) {
+            return Result::failed('This action is only for withdrawal transactions.');
+        }
+
+        if (! $transaction->payout_state?->isInFlight()) {
+            return Result::failed('Only sent or unknown payouts can be checked.');
+        }
+
+        $provider = $this->payoutProvider($transaction);
+
+        if (! $provider) {
+            return Result::failed("The {$transaction->provider} connection cannot send payouts.");
+        }
+
+        $orderId = (string) $transaction->provider_transaction_id;
+        $receipt = $this->lookupPayout($provider, $orderId);
+
+        if ($receipt === null) {
+            $this->audit($actor, 'withdrawal.sync-payout', $transaction, $transaction->status, $transaction->status, [
+                'order_id' => $orderId, 'found' => false,
+            ]);
+
+            return Result::failed("No payout found for order {$orderId} at the provider (or the lookup failed).");
+        }
+
+        $from = $transaction->status;
+
+        $this->applyPayoutUpdate($transaction, $receipt, 'sync');
+
+        $this->audit($actor, 'withdrawal.sync-payout', $transaction, $from, $transaction->status, [
+            'order_id' => $orderId, 'found' => true, 'provider_status' => $receipt->rawStatus,
+        ]);
+
+        return Result::ok("Payout status: {$receipt->rawStatus}.", $transaction);
     }
 
     /**

@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 use Asciisd\CashierCore\Contracts\FundsLedger;
 use Asciisd\CashierCore\DataObjects\Actor;
+use Asciisd\CashierCore\DataObjects\PayoutReceipt;
 use Asciisd\CashierCore\Enums\PaymentStatus;
 use Asciisd\CashierCore\Enums\PayoutState;
 use Asciisd\CashierCore\Enums\TransactionType;
 use Asciisd\CashierCore\Events\PayoutFundsInsufficient;
+use Asciisd\CashierCore\Events\WithdrawalMarkedPaid;
 use Asciisd\CashierCore\Events\WithdrawalPayoutFailed;
 use Asciisd\CashierCore\Events\WithdrawalPayoutSent;
 use Asciisd\CashierCore\Models\AdminAction;
@@ -21,6 +23,7 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 beforeEach(function () {
     Cache::flush();
@@ -279,4 +282,124 @@ it('leaves payout_state null when a never-sent withdrawal is marked paid', funct
     hpWorkflow()->markPaid($transaction, hpActor());
 
     expect($transaction->fresh()->payout_state)->toBeNull();
+});
+
+// --- applyPayoutUpdate / syncPayout -----------------------------------------
+
+function hpReceipt(string $status, array $payload = []): PayoutReceipt
+{
+    return (new \Asciisd\CashierCore\Drivers\Heropayment\HeropaymentAdapter)
+        ->payoutReceipt(HeropaymentPayoutApi::withdrawal(array_merge(['status' => $status], $payload)));
+}
+
+it('closes the withdrawal as Succeeded on finished, without touching amount', function () {
+    Event::fake([WithdrawalMarkedPaid::class]);
+
+    $transaction = hpWithdrawal(['payout_state' => PayoutState::Sent]);
+
+    $applied = hpWorkflow()->applyPayoutUpdate($transaction, hpReceipt('finished', [
+        'paidAmount' => 6.85714285,
+        'outcomeHash' => '0xabc',
+        'outcomeAmount' => 99.1,
+    ]));
+
+    $fresh = $transaction->fresh();
+
+    expect($applied)->toBeTrue()
+        ->and($fresh->status)->toBe(PaymentStatus::Succeeded)
+        ->and($fresh->payout_state)->toBe(PayoutState::Paid)
+        ->and((string) $fresh->amount)->toBe('100.00')
+        ->and($fresh->metadata['payout_outcome']['outcomeHash'])->toBe('0xabc');
+
+    Event::assertDispatched(WithdrawalMarkedPaid::class, fn ($event) => $event->actor?->guard === 'system');
+    expect(AdminAction::query()->where('action', 'withdrawal.payout-paid')->exists())->toBeTrue();
+    $this->ledger->assertNothingMoved();
+});
+
+it('keeps the withdrawal Processing and alerts on failed or refunded', function (string $status) {
+    Event::fake([WithdrawalPayoutFailed::class]);
+
+    $transaction = hpWithdrawal(['payout_state' => PayoutState::Sent]);
+
+    hpWorkflow()->applyPayoutUpdate($transaction, hpReceipt($status));
+
+    expect($transaction->fresh()->status)->toBe(PaymentStatus::Processing)
+        ->and($transaction->fresh()->payout_state)->toBe(PayoutState::Failed)
+        ->and($transaction->fresh()->metadata['payout_error'])->toBe("Heropayment status: {$status}")
+        ->and($transaction->fresh()->error_message)->toBeNull();
+
+    Event::assertDispatched(WithdrawalPayoutFailed::class);
+})->with(['failed', 'refunded']);
+
+it('refreshes the payload but changes nothing else on an in-progress status', function () {
+    Event::fake([WithdrawalPayoutFailed::class, WithdrawalMarkedPaid::class]);
+
+    $transaction = hpWithdrawal(['payout_state' => PayoutState::Sent]);
+
+    hpWorkflow()->applyPayoutUpdate($transaction, hpReceipt('exchanging'));
+
+    expect($transaction->fresh()->payout_state)->toBe(PayoutState::Sent)
+        ->and($transaction->fresh()->provider_payload['status'])->toBe('exchanging');
+
+    Event::assertNotDispatched(WithdrawalPayoutFailed::class);
+    Event::assertNotDispatched(WithdrawalMarkedPaid::class);
+});
+
+it('treats paid as final and ignores a late failed', function () {
+    $transaction = hpWithdrawal(['payout_state' => PayoutState::Sent]);
+    hpWorkflow()->applyPayoutUpdate($transaction, hpReceipt('finished'));
+
+    expect(hpWorkflow()->applyPayoutUpdate($transaction->fresh(), hpReceipt('failed')))->toBeFalse()
+        ->and($transaction->fresh()->payout_state)->toBe(PayoutState::Paid);
+});
+
+it('resolves an unknown payout and drops the leftover claim', function () {
+    $transaction = hpWithdrawal([
+        'payout_state' => PayoutState::Unknown,
+        'metadata' => ['ledger_account' => 70001, TransferClaim::METADATA_KEY => now()->toIso8601String()],
+    ]);
+
+    hpWorkflow()->applyPayoutUpdate($transaction, hpReceipt('sending'));
+
+    expect($transaction->fresh()->payout_state)->toBe(PayoutState::Sent)
+        ->and($transaction->fresh()->metadata)->not->toHaveKey(TransferClaim::METADATA_KEY);
+});
+
+// --- Review Focus 2 ---------------------------------------------------------
+
+it('logs critically and changes nothing when finished arrives for a cancelled withdrawal', function () {
+    Log::spy();
+
+    $transaction = hpWithdrawal(['status' => PaymentStatus::Canceled, 'payout_state' => PayoutState::Failed]);
+
+    expect(hpWorkflow()->applyPayoutUpdate($transaction, hpReceipt('finished')))->toBeFalse()
+        ->and($transaction->fresh()->status)->toBe(PaymentStatus::Canceled);
+
+    Log::shouldHaveReceived('critical')->withArgs(fn (string $message) => str_contains($message, 'cancelled'))->once();
+});
+
+// --- syncPayout -------------------------------------------------------------------
+
+it('syncs a sent payout from the provider', function () {
+    HeropaymentPayoutApi::fake(['lookup' => Http::response(HeropaymentPayoutApi::withdrawal(['status' => 'finished']))]);
+
+    $transaction = hpWithdrawal(['payout_state' => PayoutState::Sent]);
+
+    $result = hpWorkflow()->syncPayout($transaction, hpActor());
+
+    expect($result->ok)->toBeTrue()
+        ->and($transaction->fresh()->status)->toBe(PaymentStatus::Succeeded);
+    expect(AdminAction::query()->where('action', 'withdrawal.sync-payout')->exists())->toBeTrue();
+});
+
+it('reports when the provider has no such payout', function () {
+    HeropaymentPayoutApi::fake();
+
+    $result = hpWorkflow()->syncPayout(hpWithdrawal(['payout_state' => PayoutState::Unknown]), hpActor());
+
+    expect($result->ok)->toBeFalse()->and($result->message)->toContain('No payout found');
+});
+
+it('only syncs payouts that are sent or unknown', function () {
+    expect(hpWorkflow()->syncPayout(hpWithdrawal(), hpActor())->ok)->toBeFalse();
 });

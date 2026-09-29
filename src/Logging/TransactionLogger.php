@@ -362,4 +362,35 @@ class TransactionLogger
             'amount' => $amount,
         ]);
     }
+
+    public static function withdrawalPayoutUpdated(int $transactionId, ?string $from, string $to, string $rawStatus, string $source): void
+    {
+        self::channel()->info('Withdrawal payout state updated', [
+            'transaction_id' => $transactionId,
+            'from' => $from,
+            'to' => $to,
+            'provider_status' => $rawStatus,
+            'source' => $source,
+        ]);
+    }
+
+    public static function withdrawalPayoutUpdateIgnored(int $transactionId, string $status, ?string $payoutState, string $rawStatus, string $source): void
+    {
+        self::channel()->info('Withdrawal payout update ignored', [
+            'transaction_id' => $transactionId,
+            'status' => $status,
+            'payout_state' => $payoutState,
+            'provider_status' => $rawStatus,
+            'source' => $source,
+        ]);
+    }
+
+    public static function withdrawalPaidAfterCancellation(int $transactionId, string $status, string $orderId): void
+    {
+        self::channel()->critical('Provider reports a payout finished on a cancelled or closed withdrawal - manual intervention required', [
+            'transaction_id' => $transactionId,
+            'status' => $status,
+            'order_id' => $orderId,
+        ]);
+    }
 }
