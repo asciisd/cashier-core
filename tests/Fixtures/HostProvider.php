@@ -12,4 +12,5 @@ enum HostProvider: string
 {
     case Aps = 'aps';
     case Manual = 'manual';
+    case Heropayment = 'heropayment';
 }

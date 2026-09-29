@@ -17,6 +17,8 @@ use Asciisd\CashierCore\Models\Transaction;
 use Asciisd\CashierCore\Support\TransferClaim;
 use Asciisd\CashierCore\Testing\FakeLedger;
 use Asciisd\CashierCore\Tests\Fixtures\HeropaymentPayoutApi;
+use Asciisd\CashierCore\Tests\Fixtures\HostProvider;
+use Asciisd\CashierCore\Tests\Fixtures\HostTransaction;
 use Asciisd\CashierCore\Withdrawals\WithdrawalWorkflow;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
@@ -635,4 +637,74 @@ it('saves the new attempt id before the resend is posted', function () {
     expect($fresh->provider_transaction_id)->toBe('WD-01TEST-2')
         ->and($fresh->payout_state)->toBe(PayoutState::Sent)
         ->and($fresh->metadata['payout_attempts'])->toHaveCount(1);
+});
+
+// --- provider cast to a host display enum -----------------------------------
+//
+// Hosts routinely cast `provider` to their own display enum (documented on
+// `Transaction`). A `BackedEnum` cannot be converted to string, so anything
+// in the payout path that interpolates `$transaction->provider` directly
+// throws instead of returning a message or building an actor id.
+
+function hpEnumWithdrawal(array $overrides = []): HostTransaction
+{
+    config()->set('cashier-core.models.transaction', HostTransaction::class);
+
+    return HostTransaction::query()->create(array_merge([
+        'user_id' => 1,
+        'provider' => HostProvider::Heropayment,
+        'provider_transaction_id' => 'WD-01TEST',
+        'type' => TransactionType::Withdrawal,
+        'status' => PaymentStatus::Processing,
+        'amount' => 100,
+        'currency' => 'USD',
+        'withdrawal_method' => 'crypto',
+        'withdrawal_details' => ['payout_address' => 'TXyzCustomer', 'payout_currency' => 'usdttrc20'],
+        'metadata' => ['ledger_account' => 70001],
+        'mt5_ticket_number' => 'T-1',
+    ], $overrides));
+}
+
+it('names the enum-cast provider in the refusal message instead of throwing', function () {
+    $transaction = hpEnumWithdrawal(['provider' => HostProvider::Manual]);
+
+    $result = hpWorkflow()->sendPayout($transaction, hpActor());
+
+    expect($result->ok)->toBeFalse()
+        ->and($result->message)->toBe('The manual connection cannot send payouts.');
+});
+
+it('closes an enum-cast withdrawal as Succeeded on finished, without throwing', function () {
+    Event::fake([WithdrawalMarkedPaid::class]);
+
+    $transaction = hpEnumWithdrawal(['payout_state' => PayoutState::Sent]);
+
+    $applied = hpWorkflow()->applyPayoutUpdate($transaction, hpReceipt('finished', [
+        'paidAmount' => 6.85714285,
+        'outcomeHash' => '0xabc',
+        'outcomeAmount' => 99.1,
+    ]));
+
+    $fresh = $transaction->fresh();
+
+    expect($applied)->toBeTrue()
+        ->and($fresh->status)->toBe(PaymentStatus::Succeeded)
+        ->and($fresh->payout_state)->toBe(PayoutState::Paid);
+
+    Event::assertDispatched(WithdrawalMarkedPaid::class, fn ($event) => $event->actor?->guard === 'system');
+    expect(AdminAction::query()->where('action', 'withdrawal.payout-paid')->exists())->toBeTrue();
+});
+
+it('marks an enum-cast withdrawal payout failed on a failed callback, without throwing', function () {
+    Event::fake([WithdrawalPayoutFailed::class]);
+
+    $transaction = hpEnumWithdrawal(['payout_state' => PayoutState::Sent]);
+
+    hpWorkflow()->applyPayoutUpdate($transaction, hpReceipt('failed'));
+
+    expect($transaction->fresh()->status)->toBe(PaymentStatus::Processing)
+        ->and($transaction->fresh()->payout_state)->toBe(PayoutState::Failed);
+
+    Event::assertDispatched(WithdrawalPayoutFailed::class);
+    expect(AdminAction::query()->where('action', 'withdrawal.payout-failed')->exists())->toBeTrue();
 });
