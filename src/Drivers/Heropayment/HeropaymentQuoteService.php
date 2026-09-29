@@ -25,6 +25,12 @@ final class HeropaymentQuoteService
     private const WITHDRAWAL = 'withdrawal';
 
     /**
+     * Strict decimal, applied after trim(): a withdrawal network fee that
+     * fails this (null, missing, "", "n/a", ...) is never read as zero.
+     */
+    private const NUMERIC_PATTERN = '/^\d+(\.\d+)?$/';
+
+    /**
      * @param  array<string, mixed>  $config
      */
     public function __construct(
@@ -202,7 +208,27 @@ final class HeropaymentQuoteService
                 continue;
             }
 
-            $fees[strtolower((string) ($row['ticker'] ?? ''))] = (float) ($row['networkfee'] ?? 0);
+            $ticker = strtolower((string) ($row['ticker'] ?? ''));
+
+            // Withdrawal fees gate a real money transfer: a null, missing or
+            // non-numeric networkfee must never be read as zero, so the
+            // ticker is simply absent from the map (preflight then refuses
+            // with QUOTE_UNAVAILABLE instead of assuming no fee). Deposit
+            // rows keep the historical `?? 0` behaviour the deposit screen
+            // depends on.
+            if ($type === self::WITHDRAWAL) {
+                $raw = trim((string) ($row['networkfee'] ?? ''));
+
+                if (! preg_match(self::NUMERIC_PATTERN, $raw)) {
+                    continue;
+                }
+
+                $fees[$ticker] = (float) $raw;
+
+                continue;
+            }
+
+            $fees[$ticker] = (float) ($row['networkfee'] ?? 0);
         }
 
         return $fees;

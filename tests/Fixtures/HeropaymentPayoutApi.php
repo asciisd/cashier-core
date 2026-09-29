@@ -49,9 +49,12 @@ final class HeropaymentPayoutApi
      * `balance`, `withdrawal` and `lookup` take an Http::response() or a
      * Closure(Request), which may throw (e.g. ConnectionException for a
      * timeout). `fee_ticker` is the one coin the withdrawal network-fee row
-     * is listed for.
+     * is listed for; `fee` may be null to emit that row's `networkfee` as
+     * null (simulating a missing/unreadable withdrawal fee — see
+     * HeropaymentQuoteService::networkFees(), which then omits the ticker
+     * from withdrawalNetworkFees() rather than reading it as zero).
      *
-     * @param  array{balance?: mixed, wallet?: string, rate?: ?string, min?: float, fee?: string, fee_ticker?: string, withdrawal?: mixed, lookup?: mixed}  $options
+     * @param  array{balance?: mixed, wallet?: string, rate?: ?string, min?: float, fee?: ?string, fee_ticker?: string, withdrawal?: mixed, lookup?: mixed}  $options
      */
     public static function fake(array $options = []): void
     {

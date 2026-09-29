@@ -140,6 +140,12 @@ it('refuses when the withdrawal rate is unavailable', function () {
     expect(hpService()->preflight(hpRequest())->reason)->toBe(PayoutPreflight::QUOTE_UNAVAILABLE);
 });
 
+it('refuses with QUOTE_UNAVAILABLE instead of assuming zero when the withdrawal network fee is null', function () {
+    HeropaymentPayoutApi::fake(['fee' => null]);
+
+    expect(hpService()->preflight(hpRequest())->reason)->toBe(PayoutPreflight::QUOTE_UNAVAILABLE);
+});
+
 it('refuses when the balance lookup times out', function () {
     HeropaymentPayoutApi::fake([
         'balance' => fn () => throw new ConnectionException('cURL error 28: timed out'),

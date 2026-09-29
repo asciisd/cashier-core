@@ -169,6 +169,24 @@ it('reads withdrawal network fees separately from deposit fees', function () {
     expect(heroQuoteService()->withdrawalNetworkFees())->toBe(['usdttrc20' => 9.99]);
 });
 
+it('omits a withdrawal fee row whose networkfee is null or non-numeric instead of reading it as zero', function () {
+    fakeHeroLookups(['hero.test/v2/network-fees' => Http::response([
+        ['networkfee' => '9.9900000000', 'ticker' => 'usdttrc20', 'type' => 'withdrawal'],
+        ['networkfee' => null, 'ticker' => 'btc', 'type' => 'withdrawal'],
+        ['networkfee' => 'n/a', 'ticker' => 'doge', 'type' => 'withdrawal'],
+    ])]);
+
+    expect(heroQuoteService()->withdrawalNetworkFees())->toBe(['usdttrc20' => 9.99]);
+});
+
+it('still reads a deposit fee row with a null networkfee as zero', function () {
+    fakeHeroLookups(['hero.test/v2/network-fees' => Http::response([
+        ['networkfee' => null, 'ticker' => 'btc', 'type' => 'deposit'],
+    ])]);
+
+    expect(heroQuoteService()->depositNetworkFees())->toBe(['btc' => 0.0]);
+});
+
 it('reads the minimum withdrawal for a ticker', function () {
     fakeHeroLookups(['hero.test/v2/min-amount*' => Http::response([
         'minDeposit' => 5.0,
