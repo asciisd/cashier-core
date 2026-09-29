@@ -561,6 +561,15 @@ class WithdrawalWorkflow
                 return null;
             }
 
+            // A failed payout never goes back to in-flight: a late or
+            // re-queued waiting/sending callback would otherwise block the
+            // admin's resend and cancel. Failed → Paid still applies.
+            if ($locked->payout_state === PayoutState::Failed && $receipt->state === PayoutState::Sent) {
+                TransactionLogger::withdrawalPayoutUpdateIgnored($locked->id, $locked->status->value, $locked->payout_state->value, $receipt->rawStatus, $source);
+
+                return null;
+            }
+
             $from = $locked->payout_state;
 
             // Any write here also drops a leftover send claim: once the PSP has

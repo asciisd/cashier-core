@@ -403,3 +403,37 @@ it('reports when the provider has no such payout', function () {
 it('only syncs payouts that are sent or unknown', function () {
     expect(hpWorkflow()->syncPayout(hpWithdrawal(), hpActor())->ok)->toBeFalse();
 });
+
+// --- Final-1: Failed never reverts to Sent ------------------------------------
+
+it('ignores a waiting that arrives after failed', function () {
+    Event::fake([WithdrawalPayoutFailed::class, WithdrawalMarkedPaid::class]);
+
+    $transaction = hpWithdrawal([
+        'payout_state' => PayoutState::Failed,
+        'metadata' => ['ledger_account' => 70001, 'payout_error' => 'Heropayment status: failed'],
+    ]);
+
+    expect(hpWorkflow()->applyPayoutUpdate($transaction, hpReceipt('waiting')))->toBeFalse()
+        ->and($transaction->fresh()->payout_state)->toBe(PayoutState::Failed)
+        ->and($transaction->fresh()->metadata['payout_error'])->toBe('Heropayment status: failed');
+});
+
+it('closes the withdrawal when finished arrives after failed', function () {
+    $transaction = hpWithdrawal(['payout_state' => PayoutState::Failed]);
+
+    expect(hpWorkflow()->applyPayoutUpdate($transaction, hpReceipt('finished')))->toBeTrue()
+        ->and($transaction->fresh()->status)->toBe(PaymentStatus::Succeeded)
+        ->and($transaction->fresh()->payout_state)->toBe(PayoutState::Paid);
+});
+
+it('announces a paid payout exactly once when finished is delivered twice', function () {
+    Event::fake([WithdrawalMarkedPaid::class]);
+
+    $transaction = hpWithdrawal(['payout_state' => PayoutState::Sent]);
+
+    hpWorkflow()->applyPayoutUpdate($transaction, hpReceipt('finished'));
+    hpWorkflow()->applyPayoutUpdate($transaction->fresh(), hpReceipt('finished'));
+
+    Event::assertDispatchedTimes(WithdrawalMarkedPaid::class, 1);
+});
