@@ -226,12 +226,21 @@ it('falls back to the package webhook route under its configured name prefix', f
 
 it('refuses to send when no callback URL resolves', function () {
     HeropaymentPayoutApi::fake();
-    config()->set('cashier-core.routes.name_prefix', 'not-registered.');
+    app('router')->setRoutes(new \Illuminate\Routing\RouteCollection);
 
     expect(fn () => hpService(['webhook_url' => null])->send(hpRequest()))
         ->toThrow(\Asciisd\CashierCore\Exceptions\PaymentProcessingException::class, 'callback URL');
 
     Http::assertNotSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal'));
+});
+
+it('falls back to the package webhook route when webhook_url is empty', function () {
+    HeropaymentPayoutApi::fake();
+
+    hpService(['webhook_url' => ''])->send(hpRequest());
+
+    Http::assertSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal')
+        && $request['callbackUrl'] === route('cashier.webhooks.heropayment'));
 });
 
 it('treats a 4xx as a clean rejection carrying Heropayments message', function () {

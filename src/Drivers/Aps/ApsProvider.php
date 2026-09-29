@@ -15,6 +15,7 @@ use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
 use Asciisd\CashierCore\Enums\RefundStatus;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Asciisd\CashierCore\Logging\PaymentLogger;
+use Asciisd\CashierCore\Support\WebhookRoute;
 use Illuminate\Http\Client\HttpClientException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Route;
@@ -148,7 +149,7 @@ class ApsProvider implements PaymentProcessorInterface, PreparesChargeData, Prov
 
         $deposit = array_filter([
             'redirect_url' => $this->config['redirect_url'] ?? (Route::has('payment.success') ? route('payment.success') : null),
-            'status_callback_url' => $this->config['webhook_url'] ?? (Route::has('webhooks.aps') ? route('webhooks.aps') : null),
+            'status_callback_url' => ($this->config['webhook_url'] ?? null) ?: WebhookRoute::url('aps'),
             'external_id' => $externalId,
             'customer_ip_address' => $data['metadata']['ip_address'] ?? request()->ip(),
         ]);

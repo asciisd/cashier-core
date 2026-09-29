@@ -13,6 +13,7 @@ use Asciisd\CashierCore\DataObjects\RefundResult;
 use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Asciisd\CashierCore\Models\Transaction;
+use Asciisd\CashierCore\Support\WebhookRoute;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
@@ -175,7 +176,7 @@ class XoalaProvider implements PaymentProcessorInterface, PreparesChargeData, Pr
             'currency' => $currency,
             'merchantTransactionId' => $merchantTransactionId,
             'merchantRedirectUrl' => $redirectUrl,
-            'notificationUrl' => $this->url('webhook_url', 'cashier.webhooks.xoala'),
+            'notificationUrl' => $this->url('webhook_url', null) ?? WebhookRoute::url('xoala'),
             // DB authorizes and captures in one step, which is what a deposit
             // wants. PA would leave the funds held and uncaptured.
             'transactionType' => strtoupper((string) ($this->config['transaction_type'] ?? 'DB')),
@@ -342,9 +343,10 @@ class XoalaProvider implements PaymentProcessorInterface, PreparesChargeData, Pr
     }
 
     /**
-     * A configured callback/redirect URL, falling back to the named route.
+     * A configured callback/redirect URL, falling back to the named route
+     * (none when $fallbackRoute is null).
      */
-    private function url(string $key, string $fallbackRoute): ?string
+    private function url(string $key, ?string $fallbackRoute): ?string
     {
         $url = trim((string) ($this->config[$key] ?? ''));
 
@@ -352,7 +354,7 @@ class XoalaProvider implements PaymentProcessorInterface, PreparesChargeData, Pr
             return $url;
         }
 
-        return Route::has($fallbackRoute) ? route($fallbackRoute) : null;
+        return $fallbackRoute !== null && Route::has($fallbackRoute) ? route($fallbackRoute) : null;
     }
 
     private function baseUrl(): string

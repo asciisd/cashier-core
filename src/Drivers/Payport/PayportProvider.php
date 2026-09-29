@@ -13,6 +13,7 @@ use Asciisd\CashierCore\DataObjects\RefundResult;
 use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Asciisd\CashierCore\Logging\PaymentLogger;
+use Asciisd\CashierCore\Support\WebhookRoute;
 use Illuminate\Http\Client\HttpClientException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Route;
@@ -124,7 +125,7 @@ class PayportProvider implements PaymentProcessorInterface, PreparesChargeData, 
             'currency' => $currency,
             'customer_id' => $this->customerId($data),
             'order_desc' => $description,
-            'server_url' => $this->url('webhook_url', 'webhooks.payport'),
+            'server_url' => $this->url('webhook_url', null) ?? WebhookRoute::url('payport'),
             'return_url' => $this->url('success_url', 'payment.success'),
             'response_url' => $this->url('success_url', 'payment.success'),
             'cancel_url' => $this->url('cancel_url', 'payment.failed'),
@@ -308,13 +309,14 @@ class PayportProvider implements PaymentProcessorInterface, PreparesChargeData, 
     }
 
     /**
-     * A configured callback/redirect URL, falling back to the named route.
+     * A configured callback/redirect URL, falling back to the named route
+     * (none when $fallbackRoute is null).
      *
      * Whitespace is stripped because Payport validates these as hostnames and
      * rejects the whole request with a generic "Invalid parameters" — a leading
      * space in an env value is otherwise an expensive thing to find.
      */
-    private function url(string $key, string $fallbackRoute): ?string
+    private function url(string $key, ?string $fallbackRoute): ?string
     {
         $url = trim((string) ($this->config[$key] ?? ''));
 
@@ -322,7 +324,7 @@ class PayportProvider implements PaymentProcessorInterface, PreparesChargeData, 
             return $url;
         }
 
-        return Route::has($fallbackRoute) ? route($fallbackRoute) : null;
+        return $fallbackRoute !== null && Route::has($fallbackRoute) ? route($fallbackRoute) : null;
     }
 
     /**

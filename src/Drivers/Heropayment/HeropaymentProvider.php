@@ -15,6 +15,7 @@ use Asciisd\CashierCore\DataObjects\RefundResult;
 use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Asciisd\CashierCore\Logging\PaymentLogger;
+use Asciisd\CashierCore\Support\WebhookRoute;
 use Illuminate\Http\Client\HttpClientException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Route;
@@ -65,8 +66,7 @@ class HeropaymentProvider implements PaymentProcessorInterface, ProvidesWebhookT
                 ?? (Route::has('payment.success') ? route('payment.success') : null),
             'failUrl' => $this->config['fail_url']
                 ?? (Route::has('payment.failed') ? route('payment.failed') : null),
-            'callbackUrl' => $this->config['webhook_url']
-                ?? (Route::has('webhooks.heropayment') ? route('webhooks.heropayment') : null),
+            'callbackUrl' => ($this->config['webhook_url'] ?? null) ?: WebhookRoute::url('heropayment'),
         ]);
 
         try {
