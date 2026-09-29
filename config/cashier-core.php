@@ -217,7 +217,8 @@ return [
     |     'base_url' => env('HEROPAYMENT_BASE_URL'),   // defaults to https://api.heropayments.io
     |     'api_key' => env('HEROPAYMENT_API_KEY'),
     |     'api_secret' => env('HEROPAYMENT_API_SECRET'),
-    |     // Also the payout callback. Payouts refuse to send without one (an empty value does not fall back to the package route).
+    |     // Also the payout callback. Unset or empty falls back to the package
+    |     // webhook route; payouts refuse to send when neither resolves.
     |     'webhook_url' => env('HEROPAYMENT_WEBHOOK_URL'),
     |     // The contracted processing fee. Heropayments only reveals it after a
     |     // payment exists, so the payout balance check needs it configured.

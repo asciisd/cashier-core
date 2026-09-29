@@ -11,9 +11,9 @@ use Asciisd\CashierCore\DataObjects\PayoutRequest;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Asciisd\CashierCore\Exceptions\PayoutOutcomeUnknownException;
 use Asciisd\CashierCore\Exceptions\PayoutRejectedException;
+use Asciisd\CashierCore\Support\WebhookRoute;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
-use Illuminate\Support\Facades\Route;
 
 /**
  * Heropayments V2 withdrawals (payouts).
@@ -250,14 +250,12 @@ final class HeropaymentPayoutService implements SendsPayouts
 
     /**
      * Payouts are closed by callback, so a send without one is refused.
-     * Falls back to the package's own webhook route under its configured
-     * name prefix.
+     * Falls back to the package's own webhook route when webhook_url is
+     * unset or empty.
      */
     private function callbackUrl(): string
     {
-        $route = config('cashier-core.routes.name_prefix', 'cashier.webhooks.').'heropayment';
-
-        $url = $this->config['webhook_url'] ?? (Route::has($route) ? route($route) : null);
+        $url = trim((string) ($this->config['webhook_url'] ?? '')) ?: WebhookRoute::url('heropayment');
 
         if ($url === null || $url === '') {
             throw new PaymentProcessingException(

@@ -15,6 +15,7 @@ use Asciisd\CashierCore\Enums\PaymentStatus;
 use Asciisd\CashierCore\Enums\RefundStatus;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Asciisd\CashierCore\Logging\PaymentLogger;
+use Asciisd\CashierCore\Support\WebhookRoute;
 use Illuminate\Http\Client\HttpClientException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Route;
@@ -150,7 +151,7 @@ class SticpayProvider implements PaymentProcessorInterface, PreparesChargeData, 
             'sign_type' => $this->signType(),
             'interface_version' => $this->interfaceVersion(),
             'input_charset' => 'UTF-8',
-            'callback_url' => $this->url('callback_url', 'webhooks.sticpay'),
+            'callback_url' => $this->url('callback_url', null) ?? WebhookRoute::url('sticpay'),
             'success_url' => $this->url('success_url', 'payments.sticpay.return.success'),
             'failure_url' => $this->url('failure_url', 'payments.sticpay.return.failure'),
             'referrer_url' => $this->url('referrer_url', 'payments.sticpay.return.cancel'),
@@ -475,16 +476,14 @@ class SticpayProvider implements PaymentProcessorInterface, PreparesChargeData, 
     }
 
     /**
-     * A configured callback/redirect URL, falling back to the named route.
-     *
-     * The package-registered webhook route (`cashier.webhooks.sticpay`) is
-     * preferred over the legacy app-side name; when neither route exists the
+     * A configured callback/redirect URL, falling back to the named route
+     * (none when $fallbackRoute is null); when the route does not exist the
      * URL is omitted rather than guessed.
      *
      * Trimmed because a leading space in an env value is otherwise an
      * expensive thing to find in a signed request.
      */
-    private function url(string $key, string $fallbackRoute): ?string
+    private function url(string $key, ?string $fallbackRoute): ?string
     {
         $url = trim((string) ($this->config[$key] ?? ''));
 
@@ -492,11 +491,7 @@ class SticpayProvider implements PaymentProcessorInterface, PreparesChargeData, 
             return $url;
         }
 
-        if ($fallbackRoute === 'webhooks.sticpay' && Route::has('cashier.webhooks.sticpay')) {
-            return route('cashier.webhooks.sticpay');
-        }
-
-        return Route::has($fallbackRoute) ? route($fallbackRoute) : null;
+        return $fallbackRoute !== null && Route::has($fallbackRoute) ? route($fallbackRoute) : null;
     }
 
     /**

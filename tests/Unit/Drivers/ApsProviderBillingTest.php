@@ -150,10 +150,10 @@ it('sends no billing key on a connection that has not opted in', function () {
     // must not change their payload by a single key.
     $deposit = apsDepositBlockFor(apsBillingCustomer(), []);
 
-    // The two URL keys are absent because no `payment.success` / `webhooks.aps`
-    // route is registered in the package suite and this connection configures
-    // neither — array_filter drops them, exactly as it does today.
-    expect(array_keys($deposit))->toBe(['external_id', 'customer_ip_address']);
+    // redirect_url is absent because no `payment.success` route is registered in
+    // the package suite and this connection configures none; status_callback_url
+    // falls back to the package's own webhook route.
+    expect(array_keys($deposit))->toBe(['status_callback_url', 'external_id', 'customer_ip_address']);
 });
 
 it('sends no billing key when the connection opts out explicitly', function () {
@@ -239,4 +239,10 @@ it('logs the raw exception message with a null status on a transport failure', f
         ->not->toBeNull()
         ->and($context['error'])->toBe('cURL error 28: timed out')
         ->and($context['http_status'])->toBeNull();
+});
+
+it('falls back to the package webhook route for the status callback', function () {
+    $deposit = apsDepositBlockFor(apsBillingCustomer());
+
+    expect($deposit['status_callback_url'] ?? null)->toBe(route('cashier.webhooks.aps'));
 });

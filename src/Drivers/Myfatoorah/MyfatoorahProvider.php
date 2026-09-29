@@ -13,6 +13,7 @@ use Asciisd\CashierCore\DataObjects\RefundResult;
 use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Asciisd\CashierCore\Logging\PaymentLogger;
+use Asciisd\CashierCore\Support\WebhookRoute;
 use Illuminate\Http\Client\HttpClientException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Route;
@@ -154,7 +155,9 @@ class MyfatoorahProvider implements PaymentProcessorInterface, PreparesChargeDat
             'IntegrationUrls' => array_filter([
                 'Redirection' => $this->setting('redirect_url')
                     ?? (Route::has('payment.success') ? route('payment.success') : null),
-                'Webhook' => $this->setting('webhook_url') ?? $this->webhookRoute(),
+                // A missing Webhook is invisible: MyFatoorah quietly falls back
+                // to whatever the portal has, which may be nothing at all.
+                'Webhook' => $this->setting('webhook_url') ?? WebhookRoute::url('myfatoorah'),
             ], fn ($value) => $value !== null),
             'Language' => $this->language($data),
             'IpAddress' => $data['metadata']['ip_address'] ?? request()->ip(),
@@ -343,41 +346,6 @@ class MyfatoorahProvider implements PaymentProcessorInterface, PreparesChargeDat
         $value = trim((string) $value);
 
         return $value !== '' ? $value : null;
-    }
-
-    /**
-     * This package's own webhook endpoint, or null when the host has not
-     * registered it.
-     *
-     * The route's NAME is host-configurable: `routes.name_prefix` defaults to
-     * `cashier.webhooks.`, but an application that took over a set of callback
-     * URLs already registered with its PSPs commonly sets it to `webhooks.`.
-     * Hardcoding either prefix means the fallback silently never fires in half
-     * of all installs — and a missing `IntegrationUrls.Webhook` is invisible,
-     * because MyFatoorah quietly falls back to whatever the portal has, which
-     * may be nothing at all.
-     *
-     * So the configured prefix is asked first, then both known conventions.
-     * A host that disabled the package routes and registered its own gets null
-     * and should set `webhook_url` on the connection explicitly.
-     */
-    private function webhookRoute(): ?string
-    {
-        $configured = (string) config('cashier-core.routes.name_prefix', 'cashier.webhooks.');
-
-        $candidates = array_unique([
-            $configured.'myfatoorah',
-            'cashier.webhooks.myfatoorah',
-            'webhooks.myfatoorah',
-        ]);
-
-        foreach ($candidates as $name) {
-            if (Route::has($name)) {
-                return route($name);
-            }
-        }
-
-        return null;
     }
 
     /**
