@@ -925,13 +925,45 @@ class WithdrawalWorkflow
         return new PayoutRequest(
             externalOrderId: $orderId,
             customerId: (string) ($transaction->metadata['ledger_account'] ?? $transaction->user_id),
-            amount: (string) $transaction->amount,
+            amount: $this->payoutAmount($transaction, $details),
             currency: (string) $transaction->currency,
             payoutCurrency: strtolower($currency),
             payoutAddress: $address,
             payoutExtraId: $extraId === '' ? null : $extraId,
             customerEmail: $email === '' ? null : $email,
         );
+    }
+
+    /**
+     * What to send: the host's net `payout_amount` when it recorded one (a
+     * payout fee taken from the customer), otherwise the whole withdrawal.
+     *
+     * A present but unusable value refuses the send. It never falls back to
+     * the gross: the host recorded the key because it meant to send less.
+     *
+     * @param  array<string, mixed>  $details
+     *
+     * @throws PaymentProcessingException
+     */
+    private function payoutAmount(Transaction $transaction, array $details): string
+    {
+        $gross = (string) $transaction->amount;
+
+        if (! array_key_exists('payout_amount', $details)) {
+            return $gross;
+        }
+
+        $payout = trim((string) $details['payout_amount']);
+
+        if (! preg_match('/^\d+(\.\d+)?$/', $payout)
+            || bccomp($payout, '0', 8) <= 0
+            || bccomp($payout, $gross, 8) > 0) {
+            throw new PaymentProcessingException(
+                "This withdrawal's payout_amount ({$payout}) must be a positive amount no greater than {$gross}.",
+            );
+        }
+
+        return $payout;
     }
 
     /**
