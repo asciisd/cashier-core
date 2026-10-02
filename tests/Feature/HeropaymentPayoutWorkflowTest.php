@@ -242,6 +242,49 @@ it('fails cleanly and releases the claim when payout details are missing', funct
         ->and($transaction->fresh()->metadata)->not->toHaveKey(TransferClaim::METADATA_KEY);
 });
 
+it('sends the host payout_amount instead of the gross amount', function () {
+    HeropaymentPayoutApi::fake();
+
+    $transaction = hpWithdrawal(['withdrawal_details' => [
+        'payout_address' => 'TXyzCustomer',
+        'payout_currency' => 'usdttrc20',
+        'payout_amount' => '99.00',
+    ]]);
+
+    $result = hpWorkflow()->sendPayout($transaction, hpActor());
+
+    expect($result->ok)->toBeTrue()
+        ->and((string) $transaction->fresh()->amount)->toBe('100.00');
+
+    Http::assertSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal')
+        && $request['priceAmount'] === '99.00');
+});
+
+it('refuses an unusable payout_amount and never falls back to the gross', function (mixed $payoutAmount) {
+    HeropaymentPayoutApi::fake();
+
+    $transaction = hpWithdrawal(['withdrawal_details' => [
+        'payout_address' => 'TXyzCustomer',
+        'payout_currency' => 'usdttrc20',
+        'payout_amount' => $payoutAmount,
+    ]]);
+
+    $result = hpWorkflow()->sendPayout($transaction, hpActor());
+
+    expect($result->ok)->toBeFalse()
+        ->and($result->message)->toContain('payout_amount')
+        ->and($transaction->fresh()->metadata)->not->toHaveKey(TransferClaim::METADATA_KEY);
+
+    Http::assertNotSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal'));
+})->with([
+    'zero' => '0',
+    'negative' => '-5',
+    'malformed' => '9e1',
+    'above the gross' => '100.01',
+    'empty' => '',
+    'null' => null,
+]);
+
 // --- cancel / markPaid ----------------------------------------------------------
 
 it('refuses cancel while a payout is in flight and allows it after a failure', function () {
