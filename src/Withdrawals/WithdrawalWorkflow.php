@@ -409,7 +409,7 @@ class WithdrawalWorkflow
         // Only a definitive not-found lets the same order id go out again.
         if ($transaction->payout_state === PayoutState::Unknown) {
             try {
-                $existing = $this->lookupPayout($provider, (string) $transaction->provider_transaction_id);
+                $existing = $this->lookupPayout($provider, (string) $transaction->provider_transaction_id, $transaction->payout_reference);
             } catch (PayoutOutcomeUnknownException) {
                 return Result::failed('Could not confirm the earlier payout at the provider; nothing was sent. Try Check status later.');
             }
@@ -683,7 +683,7 @@ class WithdrawalWorkflow
         $orderId = (string) $transaction->provider_transaction_id;
 
         try {
-            $receipt = $this->lookupPayout($provider, $orderId);
+            $receipt = $this->lookupPayout($provider, $orderId, $transaction->payout_reference);
         } catch (PayoutOutcomeUnknownException $e) {
             $this->audit($actor, 'withdrawal.sync-payout', $transaction, $transaction->status, $transaction->status, [
                 'order_id' => $orderId, 'found' => false, 'lookup_failed' => true, 'error' => $e->getMessage(),
@@ -897,10 +897,10 @@ class WithdrawalWorkflow
      *
      * @throws PayoutOutcomeUnknownException
      */
-    private function lookupPayout(SendsPayouts $provider, string $orderId): ?PayoutReceipt
+    private function lookupPayout(SendsPayouts $provider, string $orderId, ?string $reference = null): ?PayoutReceipt
     {
         try {
-            return $provider->lookup($orderId);
+            return $provider->lookup($orderId, $reference);
         } catch (ConnectionException $e) {
             throw new PayoutOutcomeUnknownException("Payout lookup failed for order {$orderId}: {$e->getMessage()}", previous: $e);
         }

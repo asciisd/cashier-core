@@ -230,9 +230,9 @@ class HeropaymentProvider implements PaymentProcessorInterface, ProvidesWebhookT
         return $this->payouts()->send($request);
     }
 
-    public function lookup(string $externalOrderId): ?PayoutReceipt
+    public function lookup(string $externalOrderId, ?string $reference = null): ?PayoutReceipt
     {
-        return $this->payouts()->lookup($externalOrderId);
+        return $this->payouts()->lookup($externalOrderId, $reference);
     }
 
     public function parsePayoutWebhook(array $payload): PayoutReceipt

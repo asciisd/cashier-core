@@ -41,9 +41,14 @@ interface SendsPayouts
      * return null — callers resend on null, and a payout that landed would
      * be paid twice.
      *
+     * $reference is the PSP's own payout id when one was recorded
+     * (`payout_reference`). A provider that can only look payouts up by its
+     * own id must throw PayoutOutcomeUnknownException when it is null —
+     * never return null.
+     *
      * @throws PayoutOutcomeUnknownException when the lookup itself failed (timeout, 5xx, unreadable answer)
      */
-    public function lookup(string $externalOrderId): ?PayoutReceipt;
+    public function lookup(string $externalOrderId, ?string $reference = null): ?PayoutReceipt;
 
     /**
      * @param  array<string, mixed>  $payload  a verified payout callback
