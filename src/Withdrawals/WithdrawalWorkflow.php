@@ -552,15 +552,23 @@ class WithdrawalWorkflow
      * admin. Paid is final; a closed withdrawal is never reopened.
      *
      * @param  string  $source  `webhook` or `sync`
+     * @param  PayoutState|null  $expectedState  when set, apply only if the locked row is still in this state
+     *                                           with no fresh send claim (a decision made on a stale read)
      * @return bool whether the row changed
      */
-    public function applyPayoutUpdate(Transaction $transaction, PayoutReceipt $receipt, string $source = 'webhook'): bool
+    public function applyPayoutUpdate(Transaction $transaction, PayoutReceipt $receipt, string $source = 'webhook', ?PayoutState $expectedState = null): bool
     {
         /** @var array{0: Transaction, 1: ?PayoutState}|null $applied */
-        $applied = DB::transaction(function () use ($transaction, $receipt, $source): ?array {
+        $applied = DB::transaction(function () use ($transaction, $receipt, $source, $expectedState): ?array {
             $locked = $this->lockedWithdrawal($transaction);
 
             if (! $locked) {
+                return null;
+            }
+
+            if ($expectedState !== null && ($locked->payout_state !== $expectedState || $this->transferClaim->hasFreshClaim($locked))) {
+                TransactionLogger::withdrawalPayoutUpdateIgnored($locked->id, $locked->status->value, $locked->payout_state?->value, $receipt->rawStatus, $source);
+
                 return null;
             }
 
@@ -763,13 +771,17 @@ class WithdrawalWorkflow
 
         $from = $transaction->status;
 
-        $this->applyPayoutUpdate($transaction, new PayoutReceipt(
+        $applied = $this->applyPayoutUpdate($transaction, new PayoutReceipt(
             reference: $reference,
             rawStatus: $receipt->rawStatus,
             state: $receipt->state,
             payload: $receipt->payload,
             error: $receipt->error,
-        ), 'sync');
+        ), 'sync', PayoutState::Unknown);
+
+        if (! $applied) {
+            return Result::failed("The payout changed while checking transfer {$reference}; nothing was linked.");
+        }
 
         $this->audit($actor, 'withdrawal.link-payout-reference', $transaction, $from, $transaction->status, [
             'order_id' => $orderId, 'reference' => $reference, 'provider_status' => $receipt->rawStatus,

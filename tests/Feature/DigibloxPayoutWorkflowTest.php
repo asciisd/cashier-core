@@ -196,3 +196,21 @@ it('requires a note to confirm not sent', function () {
     expect(dbxWorkflow()->confirmPayoutNotSent($transaction = dbxUnknown(), dbxActor(), '   ')->ok)->toBeFalse()
         ->and($transaction->fresh()->payout_state)->toBe(PayoutState::Unknown);
 });
+
+it('links nothing when the payout was resolved by someone else during the lookup', function (mixed $status) {
+    dbxApi(['status' => $status]);
+
+    $transaction = dbxUnknown();
+    Transaction::query()->whereKey($transaction->getKey())->update(['payout_state' => PayoutState::Failed->value]);
+
+    $result = dbxWorkflow()->linkPayoutReference($transaction, 'Qk1Z', dbxActor());
+    $fresh = $transaction->fresh();
+
+    expect($result->ok)->toBeFalse()
+        ->and($fresh->payout_reference)->toBeNull()
+        ->and($fresh->payout_state)->toBe(PayoutState::Failed);
+    expect(AdminAction::query()->where('action', 'withdrawal.link-payout-reference')->exists())->toBeFalse();
+})->with([
+    'reports sent' => fn () => Http::response(['api_data' => ['transfer' => ['id' => 'Qk1Z', 'status' => 'QUEUED', 'user_note' => 'WD-01TEST']]]),
+    'reports failed' => fn () => Http::response(['api_data' => ['transfer' => ['id' => 'Qk1Z', 'status' => 'FAILED', 'user_note' => 'WD-01TEST']]]),
+]);
