@@ -25,6 +25,7 @@ use Asciisd\CashierCore\Events\WithdrawalCancelled;
 use Asciisd\CashierCore\Events\WithdrawalDebitFailed;
 use Asciisd\CashierCore\Events\WithdrawalMarkedPaid;
 use Asciisd\CashierCore\Events\WithdrawalPayoutFailed;
+use Asciisd\CashierCore\Events\WithdrawalPayoutOutcomeUnknown;
 use Asciisd\CashierCore\Events\WithdrawalPayoutSent;
 use Asciisd\CashierCore\Events\WithdrawalRejected;
 use Asciisd\CashierCore\Events\WithdrawalRequested;
@@ -723,6 +724,138 @@ class WithdrawalWorkflow
     }
 
     /**
+     * Resolve an unknown payout by naming the PSP's own id for it — for
+     * providers that cannot look a payout up by our order id. The id is
+     * checked at the PSP before anything is written; what the PSP reports is
+     * then applied exactly like a sync, so an already-finished payout closes.
+     */
+    public function linkPayoutReference(Transaction $transaction, string $reference, Actor $actor): Result
+    {
+        $reference = trim($reference);
+
+        if ($reference === '') {
+            return Result::failed('Enter the provider transfer id.');
+        }
+
+        $refusal = $this->manualResolutionRefusal($transaction);
+
+        if ($refusal !== null) {
+            return Result::failed($refusal);
+        }
+
+        $provider = $this->payoutProvider($transaction);
+
+        if (! $provider) {
+            return Result::failed("The {$transaction->providerName()} connection cannot send payouts.");
+        }
+
+        $orderId = (string) $transaction->provider_transaction_id;
+
+        try {
+            $receipt = $this->lookupPayout($provider, $orderId, $reference);
+        } catch (PayoutOutcomeUnknownException $e) {
+            return Result::failed("Could not confirm transfer {$reference} at the provider; nothing changed. {$e->getMessage()}");
+        }
+
+        if ($receipt === null) {
+            return Result::failed("The provider has no transfer {$reference}; nothing changed.");
+        }
+
+        $from = $transaction->status;
+
+        $this->applyPayoutUpdate($transaction, new PayoutReceipt(
+            reference: $reference,
+            rawStatus: $receipt->rawStatus,
+            state: $receipt->state,
+            payload: $receipt->payload,
+            error: $receipt->error,
+        ), 'sync');
+
+        $this->audit($actor, 'withdrawal.link-payout-reference', $transaction, $from, $transaction->status, [
+            'order_id' => $orderId, 'reference' => $reference, 'provider_status' => $receipt->rawStatus,
+        ]);
+
+        TransactionLogger::withdrawalPayoutReferenceLinked($actor->id, $transaction->id, $orderId, $reference);
+
+        return Result::ok("Linked transfer {$reference}. Payout status: {$receipt->rawStatus}.", $transaction);
+    }
+
+    /**
+     * Resolve an unknown payout an admin has confirmed, at the PSP's own
+     * dashboard, was never created. Failed is the state a resend or a cancel
+     * starts from; a resend goes out under a new order id.
+     */
+    public function confirmPayoutNotSent(Transaction $transaction, Actor $actor, string $note): Result
+    {
+        $note = trim($note);
+
+        if ($note === '') {
+            return Result::failed('Explain how you confirmed the payout was never sent.');
+        }
+
+        $orderId = (string) $transaction->provider_transaction_id;
+        $error = "Confirmed not sent by admin: {$note}";
+
+        $row = DB::transaction(function () use ($transaction, $error): ?Transaction {
+            $locked = $this->lockedWithdrawal($transaction);
+
+            if (! $locked || $this->manualResolutionRefusal($locked) !== null) {
+                return null;
+            }
+
+            $metadata = Arr::except($locked->metadata ?? [], [TransferClaim::METADATA_KEY]);
+            $metadata['payout_error'] = $error;
+
+            $locked->update([
+                'payout_state' => PayoutState::Failed,
+                'metadata' => $metadata,
+            ]);
+
+            return $locked;
+        });
+
+        if ($row === null) {
+            return Result::failed((string) ($this->manualResolutionRefusal($transaction->refresh()) ?? 'This payout can no longer be confirmed as not sent.'));
+        }
+
+        if ($transaction !== $row) {
+            $transaction->setRawAttributes($row->getAttributes(), true);
+        }
+
+        $this->audit($actor, 'withdrawal.confirm-not-sent', $row, PaymentStatus::Processing, PaymentStatus::Processing, [
+            'order_id' => $orderId, 'note' => $note,
+        ]);
+
+        TransactionLogger::withdrawalPayoutConfirmedNotSent($actor->id, $row->id, $orderId, $note);
+
+        WithdrawalPayoutFailed::dispatch($row, $error);
+
+        return Result::ok('Marked failed. The withdrawal can now be resent or cancelled.', $row);
+    }
+
+    /**
+     * Why an unknown payout cannot be resolved by hand right now, or null.
+     * A fresh claim means a send may still be in flight and its own result
+     * decides the state.
+     */
+    private function manualResolutionRefusal(Transaction $transaction): ?string
+    {
+        if ($transaction->type !== TransactionType::Withdrawal) {
+            return 'This action is only for withdrawal transactions.';
+        }
+
+        if ($transaction->status !== PaymentStatus::Processing || $transaction->payout_state !== PayoutState::Unknown) {
+            return 'Only a Processing withdrawal whose payout outcome is unknown can be resolved by hand.';
+        }
+
+        if ($this->transferClaim->hasFreshClaim($transaction)) {
+            return 'The send is still settling. Try again in a few minutes.';
+        }
+
+        return null;
+    }
+
+    /**
      * An unknown send the provider definitively never received is failed —
      * the admin's exit to resend or cancel. Only under the row lock, and only
      * while nothing is sending: a fresh claim means a send may be in flight
@@ -796,6 +929,8 @@ class WithdrawalWorkflow
         ]);
 
         TransactionLogger::withdrawalPayoutOutcomeUnknown($actor->id, $claimed->id, $orderId, $error);
+
+        WithdrawalPayoutOutcomeUnknown::dispatch($claimed, $orderId, $error);
 
         return Result::failed('Payout outcome unknown. Do not resend; use Check status, or retry after 10 minutes.');
     }
