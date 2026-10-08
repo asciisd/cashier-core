@@ -975,6 +975,8 @@ src/Http/Controllers/Webhooks/DigibloxWebhookController.php
 | `capture()` / `authorize()` / `void()` | Not applicable to crypto deposits. Must throw. |
 | Withdrawals | `WithdrawalWorkflow` over `POST /v3/transfers/centralized` + status polling. |
 
+Withdrawal payouts are implemented by `DigibloxPayoutService` (SendsPayouts) via Centralized Transfer, polled by the host since there is no withdrawal webhook, with unknown outcomes resolved by `linkPayoutReference()` / `confirmPayoutNotSent()`.
+
 **Suggested connection config keys**
 
 ```php
