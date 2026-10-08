@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 use Asciisd\CashierCore\Drivers\Digiblox\DigibloxTransferService;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
+use Asciisd\CashierCore\Exceptions\PayoutOutcomeUnknownException;
+use Asciisd\CashierCore\Exceptions\PayoutRejectedException;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
@@ -370,4 +373,59 @@ describe('status', function () {
         expect($result['mapped'])->toBe(Asciisd\CashierCore\Enums\PaymentStatus::Pending)
             ->and($result['status'])->toBe('');
     });
+});
+
+it('types a 4xx as a rejection: nothing was created, safe to correct and resend', function () {
+    fakeDigiblox(400, ['message' => 'Insufficent funds']);
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDT'))
+        ->toThrow(PayoutRejectedException::class, 'no transfer was created');
+});
+
+it('types a 5xx as an unknown outcome', function () {
+    fakeDigiblox(502, ['message' => 'Bad Gateway']);
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDT'))
+        ->toThrow(PayoutOutcomeUnknownException::class, 'do NOT retry');
+});
+
+it('types a 202 without an id as an unknown outcome', function () {
+    fakeDigiblox(202, ['status' => 'QUEUED']);
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDT'))
+        ->toThrow(PayoutOutcomeUnknownException::class);
+});
+
+it('types an unexpected 2xx as an unknown outcome, because a transfer may exist', function () {
+    fakeDigiblox(200, ['id' => 'Qk1Z', 'status' => 'QUEUED']);
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDT'))
+        ->toThrow(PayoutOutcomeUnknownException::class);
+});
+
+it('types a timeout on the create call as an unknown outcome', function () {
+    Http::fake([
+        'https://digiblox.test/gateway/api/v1/auth/login/jwt' => Http::response(['token' => 'jwt']),
+        'https://digiblox.test/gateway/api/v1/v3/transfers/centralized' => fn () => throw new ConnectionException('cURL error 28: timed out'),
+    ]);
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDT'))
+        ->toThrow(PayoutOutcomeUnknownException::class, 'timed out');
+});
+
+it('exposes the send guard without sending anything', function () {
+    Http::fake();
+
+    expect(transferService()->assertSendable(' 25 ', '0xabc'))->toBe('25');
+    expect(fn () => transferService()->assertSendable('500', '0xabc'))
+        ->toThrow(PaymentProcessingException::class, 'exceeds');
+    expect(fn () => transferService(['withdrawals_enabled' => false])->assertSendable('25', '0xabc'))
+        ->toThrow(PaymentProcessingException::class, 'disabled');
+
+    Http::assertNothingSent();
 });
