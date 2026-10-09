@@ -215,7 +215,7 @@ final class HeropaymentPayoutService implements SendsPayouts
      * found", or an unknown payout that landed would be sent a second time.
      * Only a 404 is "not found" (quirks #14, unverified).
      */
-    public function lookup(string $externalOrderId): ?PayoutReceipt
+    public function lookup(string $externalOrderId, ?string $reference = null): ?PayoutReceipt
     {
         try {
             $response = $this->client->getPaymentByOrderIdResponse($externalOrderId);

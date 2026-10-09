@@ -6,6 +6,10 @@ namespace Asciisd\CashierCore\Drivers\Digiblox;
 
 use Asciisd\CashierCore\Contracts\PaymentProcessorInterface;
 use Asciisd\CashierCore\Contracts\ProvidesWebhookTransactionId;
+use Asciisd\CashierCore\Contracts\SendsPayouts;
+use Asciisd\CashierCore\DataObjects\PayoutPreflight;
+use Asciisd\CashierCore\DataObjects\PayoutReceipt;
+use Asciisd\CashierCore\DataObjects\PayoutRequest;
 use Asciisd\CashierCore\DataObjects\PaymentResult;
 use Asciisd\CashierCore\DataObjects\RefundResult;
 use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
@@ -24,7 +28,7 @@ use Illuminate\Support\Str;
  * code and chain monitoring. There is no server-to-server settlement leg: the
  * webhook is the only authoritative notice that money arrived.
  */
-class DigibloxProvider implements PaymentProcessorInterface, ProvidesWebhookTransactionId
+class DigibloxProvider implements PaymentProcessorInterface, ProvidesWebhookTransactionId, SendsPayouts
 {
     private DigibloxClient $client;
 
@@ -34,7 +38,9 @@ class DigibloxProvider implements PaymentProcessorInterface, ProvidesWebhookTran
     private array $config;
 
     /** @var string[] */
-    private array $supportedFeatures = ['charge', 'webhook'];
+    private array $supportedFeatures = ['charge', 'webhook', 'payout'];
+
+    private ?DigibloxPayoutService $payouts = null;
 
     public function __construct(array $config = [])
     {
@@ -46,6 +52,34 @@ class DigibloxProvider implements PaymentProcessorInterface, ProvidesWebhookTran
 
         $this->client = DigibloxClient::fromConfig($config);
         $this->adapter = new DigibloxAdapter;
+    }
+
+    public function preflight(PayoutRequest $request): PayoutPreflight
+    {
+        return $this->payouts()->preflight($request);
+    }
+
+    public function send(PayoutRequest $request): PayoutReceipt
+    {
+        return $this->payouts()->send($request);
+    }
+
+    public function lookup(string $externalOrderId, ?string $reference = null): ?PayoutReceipt
+    {
+        return $this->payouts()->lookup($externalOrderId, $reference);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    public function parsePayoutWebhook(array $payload): PayoutReceipt
+    {
+        return $this->payouts()->parsePayoutWebhook($payload);
+    }
+
+    private function payouts(): DigibloxPayoutService
+    {
+        return $this->payouts ??= new DigibloxPayoutService($this->config);
     }
 
     public function charge(array $data): PaymentResult

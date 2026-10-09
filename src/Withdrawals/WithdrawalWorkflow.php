@@ -25,6 +25,7 @@ use Asciisd\CashierCore\Events\WithdrawalCancelled;
 use Asciisd\CashierCore\Events\WithdrawalDebitFailed;
 use Asciisd\CashierCore\Events\WithdrawalMarkedPaid;
 use Asciisd\CashierCore\Events\WithdrawalPayoutFailed;
+use Asciisd\CashierCore\Events\WithdrawalPayoutOutcomeUnknown;
 use Asciisd\CashierCore\Events\WithdrawalPayoutSent;
 use Asciisd\CashierCore\Events\WithdrawalRejected;
 use Asciisd\CashierCore\Events\WithdrawalRequested;
@@ -409,9 +410,9 @@ class WithdrawalWorkflow
         // Only a definitive not-found lets the same order id go out again.
         if ($transaction->payout_state === PayoutState::Unknown) {
             try {
-                $existing = $this->lookupPayout($provider, (string) $transaction->provider_transaction_id);
-            } catch (PayoutOutcomeUnknownException) {
-                return Result::failed('Could not confirm the earlier payout at the provider; nothing was sent. Try Check status later.');
+                $existing = $this->lookupPayout($provider, (string) $transaction->provider_transaction_id, $transaction->payout_reference);
+            } catch (PayoutOutcomeUnknownException $e) {
+                return Result::failed("Could not confirm the earlier payout at the provider; nothing was sent. {$e->getMessage()}");
             }
 
             if ($existing !== null) {
@@ -551,15 +552,23 @@ class WithdrawalWorkflow
      * admin. Paid is final; a closed withdrawal is never reopened.
      *
      * @param  string  $source  `webhook` or `sync`
+     * @param  PayoutState|null  $expectedState  when set, apply only if the locked row is still in this state
+     *                                           with no fresh send claim (a decision made on a stale read)
      * @return bool whether the row changed
      */
-    public function applyPayoutUpdate(Transaction $transaction, PayoutReceipt $receipt, string $source = 'webhook'): bool
+    public function applyPayoutUpdate(Transaction $transaction, PayoutReceipt $receipt, string $source = 'webhook', ?PayoutState $expectedState = null): bool
     {
         /** @var array{0: Transaction, 1: ?PayoutState}|null $applied */
-        $applied = DB::transaction(function () use ($transaction, $receipt, $source): ?array {
+        $applied = DB::transaction(function () use ($transaction, $receipt, $source, $expectedState): ?array {
             $locked = $this->lockedWithdrawal($transaction);
 
             if (! $locked) {
+                return null;
+            }
+
+            if ($expectedState !== null && ($locked->payout_state !== $expectedState || $this->transferClaim->hasFreshClaim($locked))) {
+                TransactionLogger::withdrawalPayoutUpdateIgnored($locked->id, $locked->status->value, $locked->payout_state?->value, $receipt->rawStatus, $source);
+
                 return null;
             }
 
@@ -683,13 +692,13 @@ class WithdrawalWorkflow
         $orderId = (string) $transaction->provider_transaction_id;
 
         try {
-            $receipt = $this->lookupPayout($provider, $orderId);
+            $receipt = $this->lookupPayout($provider, $orderId, $transaction->payout_reference);
         } catch (PayoutOutcomeUnknownException $e) {
             $this->audit($actor, 'withdrawal.sync-payout', $transaction, $transaction->status, $transaction->status, [
                 'order_id' => $orderId, 'found' => false, 'lookup_failed' => true, 'error' => $e->getMessage(),
             ]);
 
-            return Result::failed('The provider lookup failed; try again later.');
+            return Result::failed("The provider lookup failed; nothing changed. {$e->getMessage()}");
         }
 
         if ($receipt === null) {
@@ -720,6 +729,154 @@ class WithdrawalWorkflow
         ]);
 
         return Result::ok("Payout status: {$receipt->rawStatus}.", $transaction);
+    }
+
+    /**
+     * Resolve an unknown payout by naming the PSP's own id for it — for
+     * providers that cannot look a payout up by our order id. The id is
+     * looked up at the PSP before anything is written. If the PSP's receipt
+     * names a different reference than the one typed, nothing is linked; the
+     * reference stored is the PSP's own. What the PSP reports is then applied
+     * like a sync, so an already-finished payout closes.
+     *
+     * Whether the transfer really belongs to this order is the driver's
+     * lookup() to prove (e.g. Digiblox requires a matching user_note); this
+     * method only trusts a receipt lookup() returned without throwing.
+     */
+    public function linkPayoutReference(Transaction $transaction, string $reference, Actor $actor): Result
+    {
+        $reference = trim($reference);
+
+        if ($reference === '') {
+            return Result::failed('Enter the provider transfer id.');
+        }
+
+        $refusal = $this->manualResolutionRefusal($transaction);
+
+        if ($refusal !== null) {
+            return Result::failed($refusal);
+        }
+
+        $provider = $this->payoutProvider($transaction);
+
+        if (! $provider) {
+            return Result::failed("The {$transaction->providerName()} connection cannot send payouts.");
+        }
+
+        $orderId = (string) $transaction->provider_transaction_id;
+
+        try {
+            $receipt = $this->lookupPayout($provider, $orderId, $reference);
+        } catch (PayoutOutcomeUnknownException $e) {
+            return Result::failed("Could not confirm transfer {$reference} at the provider; nothing changed. {$e->getMessage()}");
+        }
+
+        if ($receipt === null) {
+            return Result::failed("The provider has no transfer {$reference}; nothing changed.");
+        }
+
+        $from = $transaction->status;
+
+        // The receipt carries the PSP's own reference; never overwrite it with
+        // what the admin typed.
+        if ($receipt->reference !== null && $receipt->reference !== $reference) {
+            return Result::failed("The provider answered with transfer {$receipt->reference}, not {$reference}; nothing was linked.");
+        }
+
+        $applied = $this->applyPayoutUpdate($transaction, new PayoutReceipt(
+            reference: $receipt->reference ?? $reference,
+            rawStatus: $receipt->rawStatus,
+            state: $receipt->state,
+            payload: $receipt->payload,
+            error: $receipt->error,
+        ), 'sync', PayoutState::Unknown);
+
+        if (! $applied) {
+            return Result::failed("The payout changed while checking transfer {$reference}; nothing was linked.");
+        }
+
+        $this->audit($actor, 'withdrawal.link-payout-reference', $transaction, $from, $transaction->status, [
+            'order_id' => $orderId, 'reference' => $reference, 'provider_status' => $receipt->rawStatus,
+        ]);
+
+        TransactionLogger::withdrawalPayoutReferenceLinked($actor->id, $transaction->id, $orderId, $reference);
+
+        return Result::ok("Linked transfer {$reference}. Payout status: {$receipt->rawStatus}.", $transaction);
+    }
+
+    /**
+     * Resolve an unknown payout an admin has confirmed, at the PSP's own
+     * dashboard, was never created. Failed is the state a resend or a cancel
+     * starts from; a resend goes out under a new order id.
+     */
+    public function confirmPayoutNotSent(Transaction $transaction, Actor $actor, string $note): Result
+    {
+        $note = trim($note);
+
+        if ($note === '') {
+            return Result::failed('Explain how you confirmed the payout was never sent.');
+        }
+
+        $orderId = (string) $transaction->provider_transaction_id;
+        $error = "Confirmed not sent by admin: {$note}";
+
+        $row = DB::transaction(function () use ($transaction, $error): ?Transaction {
+            $locked = $this->lockedWithdrawal($transaction);
+
+            if (! $locked || $this->manualResolutionRefusal($locked) !== null) {
+                return null;
+            }
+
+            $metadata = Arr::except($locked->metadata ?? [], [TransferClaim::METADATA_KEY]);
+            $metadata['payout_error'] = $error;
+
+            $locked->update([
+                'payout_state' => PayoutState::Failed,
+                'metadata' => $metadata,
+            ]);
+
+            return $locked;
+        });
+
+        if ($row === null) {
+            return Result::failed((string) ($this->manualResolutionRefusal($transaction->refresh()) ?? 'This payout can no longer be confirmed as not sent.'));
+        }
+
+        if ($transaction !== $row) {
+            $transaction->setRawAttributes($row->getAttributes(), true);
+        }
+
+        $this->audit($actor, 'withdrawal.confirm-not-sent', $row, PaymentStatus::Processing, PaymentStatus::Processing, [
+            'order_id' => $orderId, 'note' => $note,
+        ]);
+
+        TransactionLogger::withdrawalPayoutConfirmedNotSent($actor->id, $row->id, $orderId, $note);
+
+        WithdrawalPayoutFailed::dispatch($row, $error);
+
+        return Result::ok('Marked failed. The withdrawal can now be resent or cancelled.', $row);
+    }
+
+    /**
+     * Why an unknown payout cannot be resolved by hand right now, or null.
+     * A fresh claim means a send may still be in flight and its own result
+     * decides the state.
+     */
+    private function manualResolutionRefusal(Transaction $transaction): ?string
+    {
+        if ($transaction->type !== TransactionType::Withdrawal) {
+            return 'This action is only for withdrawal transactions.';
+        }
+
+        if ($transaction->status !== PaymentStatus::Processing || $transaction->payout_state !== PayoutState::Unknown) {
+            return 'Only a Processing withdrawal whose payout outcome is unknown can be resolved by hand.';
+        }
+
+        if ($this->transferClaim->hasFreshClaim($transaction)) {
+            return 'The send is still settling. Try again in a few minutes.';
+        }
+
+        return null;
     }
 
     /**
@@ -796,6 +953,8 @@ class WithdrawalWorkflow
         ]);
 
         TransactionLogger::withdrawalPayoutOutcomeUnknown($actor->id, $claimed->id, $orderId, $error);
+
+        WithdrawalPayoutOutcomeUnknown::dispatch($claimed, $orderId, $error);
 
         return Result::failed('Payout outcome unknown. Do not resend; use Check status, or retry after 10 minutes.');
     }
@@ -890,17 +1049,18 @@ class WithdrawalWorkflow
     }
 
     /**
-     * The payout for this order id, or null only when the provider
+     * The payout for this order id (`$reference` is the stored payout_reference,
+     * for providers that can only look up by their own id), or null only when the provider
      * definitively has none. A lookup that failed — including a provider that
      * lets a ConnectionException escape — throws: reading it as "not found"
      * would resend a payout that may have landed.
      *
      * @throws PayoutOutcomeUnknownException
      */
-    private function lookupPayout(SendsPayouts $provider, string $orderId): ?PayoutReceipt
+    private function lookupPayout(SendsPayouts $provider, string $orderId, ?string $reference = null): ?PayoutReceipt
     {
         try {
-            return $provider->lookup($orderId);
+            return $provider->lookup($orderId, $reference);
         } catch (ConnectionException $e) {
             throw new PayoutOutcomeUnknownException("Payout lookup failed for order {$orderId}: {$e->getMessage()}", previous: $e);
         }

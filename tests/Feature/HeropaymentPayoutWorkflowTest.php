@@ -498,7 +498,7 @@ it('refuses to resend an unknown payout when the lookup fails', function () {
     $fresh = $transaction->fresh();
 
     expect($result->ok)->toBeFalse()
-        ->and($result->message)->toBe('Could not confirm the earlier payout at the provider; nothing was sent. Try Check status later.')
+        ->and($result->message)->toStartWith('Could not confirm the earlier payout at the provider; nothing was sent.')->toContain('HTTP 500')
         ->and($fresh->payout_state)->toBe(PayoutState::Unknown)
         ->and($fresh->provider_transaction_id)->toBe('WD-01TEST')
         ->and($fresh->metadata)->not->toHaveKey(TransferClaim::METADATA_KEY);
@@ -539,7 +539,7 @@ it('reports a failed lookup on sync and changes nothing', function () {
     $result = hpWorkflow()->syncPayout($transaction, hpActor());
 
     expect($result->ok)->toBeFalse()
-        ->and($result->message)->toBe('The provider lookup failed; try again later.')
+        ->and($result->message)->toStartWith('The provider lookup failed; nothing changed.')->toContain('HTTP 500')
         ->and($transaction->fresh()->payout_state)->toBe(PayoutState::Unknown);
 
     $audit = AdminAction::query()->where('action', 'withdrawal.sync-payout')->sole();

@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 use Asciisd\CashierCore\Drivers\Digiblox\DigibloxTransferService;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
+use Asciisd\CashierCore\Exceptions\PayoutOutcomeUnknownException;
+use Asciisd\CashierCore\Exceptions\PayoutRejectedException;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
@@ -370,4 +373,104 @@ describe('status', function () {
         expect($result['mapped'])->toBe(Asciisd\CashierCore\Enums\PaymentStatus::Pending)
             ->and($result['status'])->toBe('');
     });
+});
+
+it('types a 4xx as a rejection: nothing was created, safe to correct and resend', function () {
+    fakeDigiblox(400, ['message' => 'Insufficent funds']);
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDT'))
+        ->toThrow(PayoutRejectedException::class, 'no transfer was created');
+});
+
+it('types a 5xx as an unknown outcome', function () {
+    fakeDigiblox(502, ['message' => 'Bad Gateway']);
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDT'))
+        ->toThrow(PayoutOutcomeUnknownException::class, 'do NOT retry');
+});
+
+it('types a 202 without an id as an unknown outcome', function () {
+    fakeDigiblox(202, ['status' => 'QUEUED']);
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDT'))
+        ->toThrow(PayoutOutcomeUnknownException::class);
+});
+
+it('types an unexpected 2xx as an unknown outcome, because a transfer may exist', function () {
+    fakeDigiblox(200, ['id' => 'Qk1Z', 'status' => 'QUEUED']);
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDT'))
+        ->toThrow(PayoutOutcomeUnknownException::class);
+});
+
+it('types a timeout on the create call as an unknown outcome', function () {
+    Http::fake([
+        'https://digiblox.test/gateway/api/v1/auth/login/jwt' => Http::response(['token' => 'jwt']),
+        'https://digiblox.test/gateway/api/v1/v3/transfers/centralized' => fn () => throw new ConnectionException('cURL error 28: timed out'),
+    ]);
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDT'))
+        ->toThrow(PayoutOutcomeUnknownException::class, 'timed out');
+});
+
+it('exposes the send guard without sending anything', function () {
+    Http::fake();
+
+    expect(transferService()->assertSendable(' 25 ', '0xabc'))->toBe('25');
+    expect(fn () => transferService()->assertSendable('500', '0xabc'))
+        ->toThrow(PaymentProcessingException::class, 'exceeds');
+    expect(fn () => transferService(['withdrawals_enabled' => false])->assertSendable('25', '0xabc'))
+        ->toThrow(PaymentProcessingException::class, 'disabled');
+
+    Http::assertNothingSent();
+});
+
+it('types an undocumented 4xx as an unknown outcome, because a transfer may exist', function (int $status) {
+    fakeDigiblox($status, ['message' => 'x']);
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDT'))
+        ->toThrow(PayoutOutcomeUnknownException::class, 'do NOT retry');
+})->with([409, 429, 408]);
+
+it('types a 422 as a rejection', function () {
+    fakeDigiblox(422, ['message' => 'Unprocessable']);
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDT'))
+        ->toThrow(PayoutRejectedException::class);
+});
+
+it('forgets the cached token on a 401 from create, which stays a rejection', function () {
+    fakeDigiblox(401, ['message' => 'Unauthorized']);
+    $key = \Asciisd\CashierCore\Drivers\Digiblox\DigibloxClient::fromConfig([
+        'base_url' => 'https://digiblox.test', 'username' => 'merchant_alpha', 'api_key' => 'key',
+        'api_secret' => 'secret', 'merchant_id' => 'M1',
+    ])->tokenCacheKey();
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDT'))
+        ->toThrow(PayoutRejectedException::class);
+
+    expect(Cache::has($key))->toBeFalse();
+});
+
+it('forgets the cached token on a 401 from status', function () {
+    Http::fake([
+        'https://digiblox.test/gateway/api/v1/auth/login/jwt' => Http::response(['token' => 'jwt']),
+        'https://digiblox.test/gateway/api/v1/transfers/*' => Http::response(['message' => 'Unauthorized'], 401),
+    ]);
+    $key = \Asciisd\CashierCore\Drivers\Digiblox\DigibloxClient::fromConfig([
+        'base_url' => 'https://digiblox.test', 'username' => 'merchant_alpha', 'api_key' => 'key',
+        'api_secret' => 'secret', 'merchant_id' => 'M1',
+    ])->tokenCacheKey();
+
+    expect(fn () => transferService()->status('Qk1Z'))->toThrow(PaymentProcessingException::class);
+
+    expect(Cache::has($key))->toBeFalse();
 });

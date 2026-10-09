@@ -252,6 +252,26 @@ class TransactionLogger
         ]);
     }
 
+    public static function withdrawalPayoutReferenceLinked(int|string $adminId, int $transactionId, string $orderId, string $reference): void
+    {
+        self::channel()->warning('Unknown withdrawal payout linked to a provider reference by an admin', [
+            'admin_id' => $adminId,
+            'transaction_id' => $transactionId,
+            'order_id' => $orderId,
+            'reference' => $reference,
+        ]);
+    }
+
+    public static function withdrawalPayoutConfirmedNotSent(int|string $adminId, int $transactionId, string $orderId, string $note): void
+    {
+        self::channel()->warning('Unknown withdrawal payout confirmed never sent by an admin', [
+            'admin_id' => $adminId,
+            'transaction_id' => $transactionId,
+            'order_id' => $orderId,
+            'note' => $note,
+        ]);
+    }
+
     public static function withdrawalPayoutPreflightRefused(int|string $adminId, int $transactionId, ?string $reason, string $message): void
     {
         self::channel()->warning('Withdrawal payout refused before sending', [
