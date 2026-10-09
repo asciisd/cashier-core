@@ -214,3 +214,41 @@ it('links nothing when the payout was resolved by someone else during the lookup
     'reports sent' => fn () => Http::response(['api_data' => ['transfer' => ['id' => 'Qk1Z', 'status' => 'QUEUED', 'user_note' => 'WD-01TEST']]]),
     'reports failed' => fn () => Http::response(['api_data' => ['transfer' => ['id' => 'Qk1Z', 'status' => 'FAILED', 'user_note' => 'WD-01TEST']]]),
 ]);
+
+it('refuses to link when Digiblox answers for a different transfer id, writing nothing', function () {
+    dbxApi(['status' => Http::response(['api_data' => ['transfer' => ['id' => 'OTHER', 'status' => 'QUEUED', 'user_note' => 'WD-01TEST']]])]);
+
+    $result = dbxWorkflow()->linkPayoutReference($transaction = dbxUnknown(), 'Qk1Z', dbxActor());
+
+    expect($result->ok)->toBeFalse()
+        ->and($transaction->fresh()->payout_state)->toBe(PayoutState::Unknown)
+        ->and($transaction->fresh()->payout_reference)->toBeNull();
+    expect(AdminAction::query()->where('action', 'withdrawal.link-payout-reference')->exists())->toBeFalse();
+});
+
+it('refuses to link a transfer that carries no note', function () {
+    dbxApi(['status' => Http::response(['api_data' => ['transfer' => ['id' => 'Qk1Z', 'status' => 'QUEUED']]])]);
+
+    $result = dbxWorkflow()->linkPayoutReference($transaction = dbxUnknown(), 'Qk1Z', dbxActor());
+
+    expect($result->ok)->toBeFalse()->and($result->message)->toContain('no user_note')
+        ->and($transaction->fresh()->payout_reference)->toBeNull();
+    expect(AdminAction::query()->where('action', 'withdrawal.link-payout-reference')->exists())->toBeFalse();
+});
+
+it('tells the admin why a sync lookup failed', function () {
+    dbxApi(['status' => Http::response(['api_data' => ['transfer' => ['id' => 'Qk1Z', 'status' => 'QUEUED', 'user_note' => 'WD-OTHER']]])]);
+
+    $result = dbxWorkflow()->syncPayout(dbxWithdrawal(['payout_state' => PayoutState::Sent, 'payout_reference' => 'Qk1Z']), dbxActor());
+
+    expect($result->ok)->toBeFalse()->and($result->message)->toContain('WD-OTHER');
+});
+
+it('tells the admin why a resend was blocked by an unresolvable unknown payout', function () {
+    dbxApi();
+    $transaction = dbxUnknown();
+
+    $result = dbxWorkflow()->sendPayout($transaction, dbxActor());
+
+    expect($result->ok)->toBeFalse()->and($result->message)->toContain('Link the Digiblox transfer id');
+});

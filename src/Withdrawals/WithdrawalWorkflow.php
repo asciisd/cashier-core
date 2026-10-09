@@ -411,8 +411,8 @@ class WithdrawalWorkflow
         if ($transaction->payout_state === PayoutState::Unknown) {
             try {
                 $existing = $this->lookupPayout($provider, (string) $transaction->provider_transaction_id, $transaction->payout_reference);
-            } catch (PayoutOutcomeUnknownException) {
-                return Result::failed('Could not confirm the earlier payout at the provider; nothing was sent. Try Check status later.');
+            } catch (PayoutOutcomeUnknownException $e) {
+                return Result::failed("Could not confirm the earlier payout at the provider; nothing was sent. {$e->getMessage()}");
             }
 
             if ($existing !== null) {
@@ -698,7 +698,7 @@ class WithdrawalWorkflow
                 'order_id' => $orderId, 'found' => false, 'lookup_failed' => true, 'error' => $e->getMessage(),
             ]);
 
-            return Result::failed('The provider lookup failed; try again later.');
+            return Result::failed("The provider lookup failed; nothing changed. {$e->getMessage()}");
         }
 
         if ($receipt === null) {
@@ -734,8 +734,14 @@ class WithdrawalWorkflow
     /**
      * Resolve an unknown payout by naming the PSP's own id for it — for
      * providers that cannot look a payout up by our order id. The id is
-     * checked at the PSP before anything is written; what the PSP reports is
-     * then applied exactly like a sync, so an already-finished payout closes.
+     * looked up at the PSP before anything is written. If the PSP's receipt
+     * names a different reference than the one typed, nothing is linked; the
+     * reference stored is the PSP's own. What the PSP reports is then applied
+     * like a sync, so an already-finished payout closes.
+     *
+     * Whether the transfer really belongs to this order is the driver's
+     * lookup() to prove (e.g. Digiblox requires a matching user_note); this
+     * method only trusts a receipt lookup() returned without throwing.
      */
     public function linkPayoutReference(Transaction $transaction, string $reference, Actor $actor): Result
     {
@@ -771,8 +777,14 @@ class WithdrawalWorkflow
 
         $from = $transaction->status;
 
+        // The receipt carries the PSP's own reference; never overwrite it with
+        // what the admin typed.
+        if ($receipt->reference !== null && $receipt->reference !== $reference) {
+            return Result::failed("The provider answered with transfer {$receipt->reference}, not {$reference}; nothing was linked.");
+        }
+
         $applied = $this->applyPayoutUpdate($transaction, new PayoutReceipt(
-            reference: $reference,
+            reference: $receipt->reference ?? $reference,
             rawStatus: $receipt->rawStatus,
             state: $receipt->state,
             payload: $receipt->payload,
@@ -1037,7 +1049,8 @@ class WithdrawalWorkflow
     }
 
     /**
-     * The payout for this order id, or null only when the provider
+     * The payout for this order id (`$reference` is the stored payout_reference,
+     * for providers that can only look up by their own id), or null only when the provider
      * definitively has none. A lookup that failed — including a provider that
      * lets a ConnectionException escape — throws: reading it as "not found"
      * would resend a payout that may have landed.
