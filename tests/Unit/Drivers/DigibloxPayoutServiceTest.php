@@ -167,3 +167,24 @@ it('exposes payouts through the provider', function () {
     expect($provider)->toBeInstanceOf(\Asciisd\CashierCore\Contracts\SendsPayouts::class)
         ->and($provider->supports('payout'))->toBeTrue();
 });
+
+it('treats an unreadable or mismatched lookup answer as an unknown outcome', function (mixed $response, string $message) {
+    dbxFake(['https://digiblox.test/gateway/api/v1/transfers/*' => $response]);
+
+    expect(fn () => (new DigibloxPayoutService(dbxServiceConfig()))->lookup('WD-01TEST', 'Qk1Z'))
+        ->toThrow(PayoutOutcomeUnknownException::class, $message);
+})->with([
+    'no transfer in a 2xx' => [fn () => Http::response(['api_message' => 'ok', 'api_data' => []]), 'unreadable'],
+    'id mismatch' => [fn () => Http::response(dbxStatusResponse('QUEUED', ['id' => 'OTHER'])), 'OTHER'],
+    'missing id' => [fn () => Http::response(['api_data' => ['transfer' => ['status' => 'QUEUED', 'user_note' => 'WD-01TEST']]]), '(no id)'],
+    'missing note' => [fn () => Http::response(['api_data' => ['transfer' => ['id' => 'Qk1Z', 'status' => 'QUEUED']]]), 'no user_note'],
+    'empty note' => [fn () => Http::response(dbxStatusResponse('QUEUED', ['user_note' => ''])), 'no user_note'],
+    'server error' => [fn () => Http::response(['message' => 'boom'], 500), 'lookup failed'],
+]);
+
+it('turns a connection failure during lookup into an unknown outcome', function () {
+    dbxFake(['https://digiblox.test/gateway/api/v1/transfers/*' => fn () => throw new \Illuminate\Http\Client\ConnectionException('timed out')]);
+
+    expect(fn () => (new DigibloxPayoutService(dbxServiceConfig()))->lookup('WD-01TEST', 'Qk1Z'))
+        ->toThrow(PayoutOutcomeUnknownException::class);
+});

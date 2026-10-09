@@ -168,6 +168,13 @@ class DigibloxTransferService
         // 202 Accepted, not 200.
         $status = $response->status();
 
+        // A superseded token reads back as 401; forget it so the next call
+        // re-mints instead of reusing it until its TTL expires. The 401 is
+        // still a rejection: the request was refused before anything was made.
+        if ($status === 401) {
+            $this->client->forgetToken();
+        }
+
         if ($status === 202) {
             $id = (string) ($response->json('id') ?? '');
 
@@ -214,12 +221,22 @@ class DigibloxTransferService
             ));
         }
 
-        // A 4xx (400/401/403, per §6.1) is a clean rejection: Digiblox
-        // validated the request before creating anything, so no transfer was
-        // created and this is safe to correct and resend.
-        throw new PayoutRejectedException(
-            'Digiblox rejected the withdrawal; no transfer was created: '.trim($response->body()),
-        );
+        // Only 400, 401, 403 and 422 are documented clean rejections: Digiblox
+        // validated the request before creating anything, so nothing exists
+        // and it is safe to correct and resend. Any other 4xx (409, 429, 408 …)
+        // is undocumented for this endpoint, so a transfer may exist.
+        if (in_array($status, [400, 401, 403, 422], true)) {
+            throw new PayoutRejectedException(
+                'Digiblox rejected the withdrawal; no transfer was created: '.trim($response->body()),
+            );
+        }
+
+        throw new PayoutOutcomeUnknownException(sprintf(
+            'Digiblox answered the withdrawal request with an unexpected %d. The transfer may or may not have been '
+            .'created — do NOT retry. Response: %s',
+            $status,
+            trim($response->body()),
+        ));
     }
 
     /**
@@ -245,6 +262,10 @@ class DigibloxTransferService
             ->withToken($this->client->authToken())
             ->acceptJson()
             ->get($this->baseUrl().'/gateway/api/v1/transfers/'.rawurlencode($transferId));
+
+        if ($response->status() === 401) {
+            $this->client->forgetToken();
+        }
 
         // Every non-2xx is treated uniformly, including 404. The spec says a
         // 404 means the id does not exist OR is not visible to this caller —

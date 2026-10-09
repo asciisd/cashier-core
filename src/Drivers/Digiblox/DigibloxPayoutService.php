@@ -23,6 +23,11 @@ use Illuminate\Http\Client\ConnectionException;
  * balance endpoint, so preflight checks only what can be checked locally;
  * "Insufficent funds" arrives as a 400 that creates nothing.
  *
+ * Every transfer this driver creates carries the order id as its `user_note`,
+ * and lookup() relies on it: a transfer whose note is missing, empty or
+ * different, whose returned id differs from the requested one, or whose status
+ * is unreadable is never trusted — it throws PayoutOutcomeUnknownException.
+ *
  * The amount is sent as-is in the payout asset's units, which is why every
  * `payout_assets` entry names the fiat it is pegged to and a withdrawal in any
  * other currency is refused.
@@ -88,11 +93,36 @@ final class DigibloxPayoutService implements SendsPayouts
         }
 
         $raw = $transfer['raw'];
+
+        // An answer with no readable status, or about a different transfer,
+        // proves nothing about this payout.
+        if ($transfer['status'] === '') {
+            throw new PayoutOutcomeUnknownException(
+                "Digiblox returned an unreadable status for transfer {$reference}; the payout outcome is unknown.",
+            );
+        }
+
+        $returnedId = $raw['id'] ?? null;
+
+        if (! is_string($returnedId) || $returnedId !== $reference) {
+            throw new PayoutOutcomeUnknownException(sprintf(
+                'Digiblox answered for transfer %s when %s was requested; the payout outcome is unknown.',
+                is_string($returnedId) && $returnedId !== '' ? $returnedId : '(no id)',
+                $reference,
+            ));
+        }
+
+        // Every transfer this driver creates carries the order id as its
+        // note, so a transfer is ours only when the note is present and equal.
         $note = $raw['user_note'] ?? null;
 
-        // Every transfer we create carries the order id as its note. A
-        // different note means the id belongs to another payout.
-        if (is_string($note) && $note !== '' && $note !== $externalOrderId) {
+        if (! is_string($note) || $note === '') {
+            throw new PayoutOutcomeUnknownException(
+                "Digiblox transfer {$reference} has no user_note, so it cannot be tied to order {$externalOrderId}.",
+            );
+        }
+
+        if ($note !== $externalOrderId) {
             throw new PayoutOutcomeUnknownException(
                 "Digiblox transfer {$reference} belongs to order {$note}, not {$externalOrderId}.",
             );

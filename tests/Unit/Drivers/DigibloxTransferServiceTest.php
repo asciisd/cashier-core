@@ -429,3 +429,48 @@ it('exposes the send guard without sending anything', function () {
 
     Http::assertNothingSent();
 });
+
+it('types an undocumented 4xx as an unknown outcome, because a transfer may exist', function (int $status) {
+    fakeDigiblox($status, ['message' => 'x']);
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDT'))
+        ->toThrow(PayoutOutcomeUnknownException::class, 'do NOT retry');
+})->with([409, 429, 408]);
+
+it('types a 422 as a rejection', function () {
+    fakeDigiblox(422, ['message' => 'Unprocessable']);
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDT'))
+        ->toThrow(PayoutRejectedException::class);
+});
+
+it('forgets the cached token on a 401 from create, which stays a rejection', function () {
+    fakeDigiblox(401, ['message' => 'Unauthorized']);
+    $key = \Asciisd\CashierCore\Drivers\Digiblox\DigibloxClient::fromConfig([
+        'base_url' => 'https://digiblox.test', 'username' => 'merchant_alpha', 'api_key' => 'key',
+        'api_secret' => 'secret', 'merchant_id' => 'M1',
+    ])->tokenCacheKey();
+
+    expect(fn () => transferService()
+        ->create('25', '0x91bF3A2cE67D5F12B4C98aE45F8dA12C3eF98765', 'ETHEREUM', 'USDT'))
+        ->toThrow(PayoutRejectedException::class);
+
+    expect(Cache::has($key))->toBeFalse();
+});
+
+it('forgets the cached token on a 401 from status', function () {
+    Http::fake([
+        'https://digiblox.test/gateway/api/v1/auth/login/jwt' => Http::response(['token' => 'jwt']),
+        'https://digiblox.test/gateway/api/v1/transfers/*' => Http::response(['message' => 'Unauthorized'], 401),
+    ]);
+    $key = \Asciisd\CashierCore\Drivers\Digiblox\DigibloxClient::fromConfig([
+        'base_url' => 'https://digiblox.test', 'username' => 'merchant_alpha', 'api_key' => 'key',
+        'api_secret' => 'secret', 'merchant_id' => 'M1',
+    ])->tokenCacheKey();
+
+    expect(fn () => transferService()->status('Qk1Z'))->toThrow(PaymentProcessingException::class);
+
+    expect(Cache::has($key))->toBeFalse();
+});
