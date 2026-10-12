@@ -93,6 +93,26 @@ describe('fromWebhook', function () {
         expect($update->status)->toBe(PaymentStatus::Failed)
             ->and($update->errorMessage)->toBe('Heropayment status: expired');
     });
+
+    /*
+     * Regression, production txn 1923: the callback reports what arrived as
+     * `paidAmount`. Reading a non-existent `actuallyPaid` key left settlement
+     * reconciliation switched off, so a 1.28% underpayment funded the full
+     * invoice — on every Heropayment deposit since the driver shipped.
+     */
+    it('reports what actually arrived from paidAmount', function () {
+        $update = $this->adapter->fromWebhook(heropaymentUnderpaidCallback());
+
+        expect($update->metadata['settlement_expected_payment'])->toBe(910.14920439)
+            ->and($update->metadata['settlement_actually_paid'])->toBe(898.5)
+            ->and($update->metadata['heropayment_actually_paid'])->toBe(898.5);
+    });
+
+    it('reports what Heropayment settled to the merchant', function () {
+        $update = $this->adapter->fromWebhook(heropaymentUnderpaidCallback());
+
+        expect($update->metadata['settlement_reported_amount'])->toBe(891.75131482);
+    });
 });
 
 describe('crypto payment method snapshot', function () {
@@ -148,7 +168,7 @@ describe('crypto payment method snapshot', function () {
 });
 
 it('maps V2 withdrawal statuses to payout states', function (string $status, PayoutState $state) {
-    expect((new \Asciisd\CashierCore\Drivers\Heropayment\HeropaymentAdapter)->mapPayoutStatus($status))->toBe($state);
+    expect((new HeropaymentAdapter)->mapPayoutStatus($status))->toBe($state);
 })->with([
     ['waiting', PayoutState::Sent],
     ['confirming', PayoutState::Sent],
@@ -163,7 +183,7 @@ it('maps V2 withdrawal statuses to payout states', function (string $status, Pay
 ]);
 
 it('builds a payout receipt carrying the payment id and a failure reason', function () {
-    $receipt = (new \Asciisd\CashierCore\Drivers\Heropayment\HeropaymentAdapter)->payoutReceipt([
+    $receipt = (new HeropaymentAdapter)->payoutReceipt([
         'id' => 'hero-wd-9',
         'status' => 'refunded',
         'externalOrderId' => 'WD-01TEST',

@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Asciisd\CashierCore\Contracts\FundsLedger;
 use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
 use Asciisd\CashierCore\Drivers\Aps\ApsAdapter;
+use Asciisd\CashierCore\Drivers\Heropayment\HeropaymentAdapter;
 use Asciisd\CashierCore\Enums\PaymentStatus;
 use Asciisd\CashierCore\Enums\TransactionType;
 use Asciisd\CashierCore\Events\DepositHeldForReview;
@@ -346,4 +347,36 @@ it('never reconciles settlement against a converted charge leg', function () {
         ->and($fresh->settled_amount)->toBeNull();
 
     $this->ledger->assertMoved('credit', fn (array $m) => $m['amount'] === 100.0);
+});
+
+/*
+ * Regression, production txn 1923: a $900 deposit invoiced at 910.15 USDT,
+ * of which the customer sent 898.50. With no settlement tolerance the ledger
+ * must be credited the fraction actually paid, not the whole invoice.
+ */
+it('credits an underpaid Heropayment deposit only for what arrived', function () {
+    config()->set('cashier-core.settlement.tolerance_percent', 0.0);
+
+    $transaction = processorDeposit([
+        'provider' => 'heropayment',
+        'provider_transaction_id' => 'a53c3593-945c-412a-928c-21313399c08d',
+        'amount' => 900,
+        'requested_amount' => 906.90,
+        'charged_amount' => 906.90,
+        'psp_fee_amount' => 6.89,
+        'markup_amount' => 0,
+    ]);
+
+    $update = (new HeropaymentAdapter)->fromWebhook(heropaymentUnderpaidCallback());
+
+    app(WebhookProcessor::class)->applyUpdate('heropayment', $transaction, $update);
+
+    $expected = round(900 * 898.5 / 910.14920439, 2);
+    $fresh = $transaction->fresh();
+
+    expect($fresh->status)->toBe(PaymentStatus::Succeeded)
+        ->and((float) $fresh->amount)->toBe($expected)
+        ->and((float) $fresh->settled_amount)->toBe($expected);
+
+    $this->ledger->assertMoved('credit', fn (array $m) => $m['amount'] === $expected);
 });
