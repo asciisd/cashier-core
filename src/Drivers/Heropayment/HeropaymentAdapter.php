@@ -84,9 +84,12 @@ class HeropaymentAdapter implements PaymentAdapterInterface
         // A crypto invoice is a wallet address, so the customer decides what to
         // send. These generic keys let the webhook processor reconcile the
         // deposit to what actually arrived without knowing it is Heropayment.
+        // What arrived is `paidAmount`: reading anything else leaves the
+        // reconciliation off and funds an underpayment in full.
         $metadata += array_filter([
             'settlement_expected_payment' => $payload['payAmount'] ?? null,
-            'settlement_actually_paid' => $payload['actuallyPaid'] ?? null,
+            'settlement_actually_paid' => self::actuallyPaid($payload),
+            'settlement_reported_amount' => $payload['merchantAmountUsdt'] ?? null,
         ], fn ($value) => $value !== null);
 
         if ($rawStatus === 'partially_paid') {
@@ -181,8 +184,21 @@ class HeropaymentAdapter implements PaymentAdapterInterface
             'heropayment_external_order_id' => $payload['externalOrderId'] ?? $payload['orderID'] ?? $payload['orderId'] ?? null,
             'heropayment_pay_currency' => $payload['payCurrency'] ?? null,
             'heropayment_pay_amount' => $payload['payAmount'] ?? null,
-            'heropayment_actually_paid' => $payload['actuallyPaid'] ?? null,
+            'heropayment_actually_paid' => self::actuallyPaid($payload),
         ], fn ($value) => $value !== null);
+    }
+
+    /**
+     * What the customer actually sent, in the pay currency.
+     *
+     * Heropayment reports it as `paidAmount`; `actuallyPaid` is the
+     * NOWPayments-style name this adapter originally read, kept as a fallback.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    private static function actuallyPaid(array $payload): mixed
+    {
+        return $payload['paidAmount'] ?? $payload['actuallyPaid'] ?? null;
     }
 
     /**

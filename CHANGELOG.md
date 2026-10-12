@@ -1,3 +1,9 @@
+## 2.9.1
+
+- Heropayment: deposit callbacks now reconcile against what actually arrived. The adapter read `actuallyPaid`, a key Heropayment never sends; it reports the amount as `paidAmount`. With the key missing, `settlement_actually_paid` was never set, so an underpaid crypto deposit was credited the full invoice. `actuallyPaid` remains a fallback.
+- Heropayment: callbacks now report `settlement_reported_amount` (`merchantAmountUsdt`), so `FeeDriftDetected` fires for this driver.
+- Note: shortfalls inside `settlement.tolerance_percent` (default 2%) are still credited in full. A host that must never fund an underpayment sets it to 0.
+
 ## 2.9.0
 
 - Payouts: Digiblox sends crypto withdrawal payouts (`DigibloxProvider` implements `SendsPayouts`). Configure `payout_assets` per connection: `ticker => ['asset' => 'USDT', 'network' => 'TRON', 'peg' => 'USD']`. Digiblox has no withdrawal webhook — the host must poll `lookup()` passing the stored `payout_reference` (or use `WithdrawalWorkflow::syncPayout()`). Payouts also need the connection keys `withdrawals_enabled` (default false) and `withdrawal_max_amount` (required cap).
