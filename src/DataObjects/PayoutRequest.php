@@ -26,5 +26,7 @@ readonly class PayoutRequest
         public string $payoutAddress,
         public ?string $payoutExtraId = null,
         public ?string $customerEmail = null,
+        // Only drivers that need the beneficiary's identity read this.
+        public ?PayoutBeneficiary $beneficiary = null,
     ) {}
 }
