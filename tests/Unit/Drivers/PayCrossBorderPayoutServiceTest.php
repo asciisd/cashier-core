@@ -76,6 +76,7 @@ it('refuses on configuration or input before calling PCB', function (array $conf
     'cap zero' => [['withdrawal_max_amount' => '0'], [], null, 'no valid withdrawal_max_amount'],
     'over cap' => [[], ['amount' => '1000.01'], null, 'exceeds the configured cap of 1000'],
     'bad amount' => [[], ['amount' => '1e2'], null, 'positive number'],
+    'too many decimals' => [[], ['amount' => '100.005'], null, 'at most 2 decimal places'],
     'other currency' => [[], ['currency' => 'AED'], null, 'An AED withdrawal cannot be paid from the PayCrossBorder USD-USA wallet'],
     'unmapped currency' => [[], ['currency' => 'EUR'], null, 'no currency code configured for eur'],
     'unmapped payout currency' => [[], ['payoutCurrency' => 'btc'], null, 'no currency code configured for btc'],
@@ -230,6 +231,15 @@ it('refuses to send when the quote is unusable', function (array|string $quote, 
     'no code' => [['json' => PayCrossBorderApi::quote(['code' => null])], 'without code'],
     'timeout' => ['timeout', 'cURL error 28'],
 ]);
+
+it('refuses a quote that drifts by less than a cent from the requested amount', function () {
+    PayCrossBorderApi::fake(['quote' => Http::response(PayCrossBorderApi::quote(['payinAmount' => '1000.009']))]);
+
+    expect(fn () => pcbService()->send(PayCrossBorderApi::request(['amount' => '1000.00'])))
+        ->toThrow(PaymentProcessingException::class, 'quoted 1000.009 for a 1000.00 payout');
+
+    expect(pcbPayoutSent())->toBeNull();
+});
 
 it('treats PCB refusals as rejections', function (array $payout, string $message) {
     PayCrossBorderApi::fake(['payout' => pcbStub($payout)]);

@@ -137,7 +137,7 @@ final class PayCrossBorderPayoutService implements SendsPayouts
 
         $body = [
             'transactionInfo' => [
-                'payinAmount' => (string) $quote['payinAmount'],
+                'payinAmount' => $amount,
                 'payinCurrency' => $this->sendCurrency(),
                 'type' => 'B2C',
                 'requestDate' => now()->format('d-m-Y'),
@@ -274,6 +274,10 @@ final class PayCrossBorderPayoutService implements SendsPayouts
             throw new PaymentProcessingException('PayCrossBorder withdrawal amount must be a positive number.');
         }
 
+        if (! preg_match('/^\d+(\.\d{1,2})?$/', $amount)) {
+            throw new PaymentProcessingException('PayCrossBorder withdrawal amount must have at most 2 decimal places.');
+        }
+
         if (bccomp($amount, $cap, self::SCALE) > 0) {
             throw new PaymentProcessingException(sprintf('Withdrawal of %s exceeds the configured cap of %s.', $amount, $cap));
         }
@@ -333,7 +337,7 @@ final class PayCrossBorderPayoutService implements SendsPayouts
 
         $quoted = self::decimal($quote['payinAmount']);
 
-        if ($quoted === null || bccomp($quoted, $amount, 2) !== 0) {
+        if ($quoted === null || bccomp($quoted, $amount, self::SCALE) !== 0) {
             throw new PaymentProcessingException(sprintf(
                 'PayCrossBorder quoted %s for a %s payout. Nothing was sent.',
                 (string) $quote['payinAmount'],
