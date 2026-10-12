@@ -82,24 +82,27 @@ HTTP only; knows endpoints and auth, not business rules.
   connection for `expires_in − 60` seconds. With `password_hash = 'md5'` the
   configured password is sent as `strtoupper(md5($password))`; with `null`
   (default) it is sent verbatim.
+  When `oauth_client_id` is configured the token request also carries HTTP
+  Basic auth with `oauth_client_id:oauth_client_secret` (the docs list an
+  `authorization` header for this call but do not describe it).
 - `forgetToken(): void`.
 - `quote(array $body): array` — `POST /ewallet/api/v1/fxratequotation/api`.
-- `payout(array $body): array` — `POST /ewallet/api/v1/payoutProcess/api`,
-  body wrapped as `{"payout": {...}}`.
+- `payout(array $body): Response` — `POST /ewallet/api/v1/payoutProcess/api`,
+  body wrapped as `{"payout": {...}}`. Returns the raw response and never
+  throws on an HTTP status, so the service can tell a rejection from an
+  unknown outcome; a timeout surfaces as `ConnectionException`.
 - `transaction(string $transId): array` —
   `GET /ewallet/api/v1/transactionInfo/api?types=all&status=all&transId=…`.
-- `balance(): array` — `GET /ewallet/api/v1/wallet/walletOwner/{wallet_owner_code}`.
+- `balance(string $walletOwnerCode): array` —
+  `GET /ewallet/api/v1/wallet/walletOwner/{walletOwnerCode}`.
 
-Every call sends `Authorization: Bearer {token}` plus the three headers above
-and treats a response as successful only when HTTP is 2xx **and**
-`resultCode === "0"`. A 401 calls `forgetToken()`. Only `transaction()` and
-`balance()` (read-only) retry once with a fresh token after a 401; `quote()`
-and `payout()` never retry.
-
-Failures surface as a `PayCrossBorderApiException` (driver-local, extends
-`PaymentProcessingException`) carrying HTTP status, `resultCode`,
-`resultDescription` and whether the failure was a transport error (timeout,
-connection refused) — the service decides what each means.
+Every call sends `Authorization: Bearer {token}` plus the three headers
+above. `quote()`, `transaction()` and `balance()` return the decoded body
+only when HTTP is 2xx **and** `resultCode === "0"`, and otherwise throw
+`PaymentProcessingException` with the HTTP status, `resultCode` and
+`resultDescription` (a timeout included). A 401 calls `forgetToken()`. Only
+`transaction()` and `balance()` (read-only) retry once with a fresh token
+after a 401; `quote()` and `payout()` never retry.
 
 ### `PayCrossBorderPayoutService implements SendsPayouts`
 
@@ -202,29 +205,44 @@ An `InvalidArgumentException` from `fromArray` is rethrown as
 
 ### References
 
-- `sendClientTrxReference`: `externalOrderId` uppercased, if it is already
-  10–30 alphanumeric characters; otherwise `'PCB' . strtoupper(substr(hash('sha256', $externalOrderId), 0, 27))`
-  (30 chars). Deterministic, so `lookup()` recomputes it.
+- `sendClientTrxReference`: `externalOrderId` with `-` and `_` removed and
+  uppercased, when that leaves 10–30 letters and digits — the workflow's
+  `WD-<ULID>` and `WD-<ULID>-2` become `WD<ULID>` and `WD<ULID>2`, readable
+  in PCB's back office. Otherwise
+  `'PCB' . strtoupper(substr(hash('sha256', $externalOrderId), 0, 27))`
+  (30 chars). Deterministic, so `lookup()` recomputes it. Two order ids that
+  differ only in hyphens or underscores would collide; the workflow's ids
+  never do.
 - `descriptionText`: the same reference cut to 25 characters.
 - `docReferenceNumber`: the same reference.
 
 ### `preflight(PayoutRequest): PayoutPreflight`
 
-1. `withdrawals_enabled` false → `refused(message: 'PayCrossBorder withdrawals are disabled')`.
-   Amount above `withdrawal_max_amount` (or that key unset) → refused.
-2. No beneficiary → refused. Mixed `bank` + `wallet` → refused.
-3. `payoutCurrency` and the configured `send_currency` must resolve through
-   `currency_codes` (case-insensitive keys); unmapped → refused.
-4. The rail's builder `assertComplete()`; a failure becomes `refused` with
-   the builder's message (which names the field).
-5. `balance()`; pick the wallet whose `walletTypeName` is `Main Wallet` and
-   whose `currencyName` equals `settlement_currency`. None, or the call
-   failing → `BALANCE_UNAVAILABLE`. `value < amount × (1 + balance_buffer_percent/100)`
-   → `INSUFFICIENT_FUNDS`. Else `passed(value, required, settlement_currency)`.
+Steps 1–4 are the shared guard, run by `preflight()` and `send()` alike.
+Like the Heropayment and Digiblox payout services, the guard **throws**
+`PaymentProcessingException` (configuration or input error, nothing sent)
+rather than returning a refused preflight.
+
+1. `withdrawals_enabled` false → throws. `withdrawal_max_amount` unset,
+   malformed or zero → throws. Amount not a positive decimal, or above the
+   cap → throws.
+2. No beneficiary → throws. Both `bank` and `wallet` → throws.
+3. `currency_codes` (case-insensitive keys) must map the request's
+   `currency` to exactly `send_currency` — the amount is sent in that
+   currency, so a withdrawal in any other currency is refused — and must
+   map `payoutCurrency`. Unmapped → throws.
+4. The rail's builder `assertComplete()`; its exception names the field.
+5. `balance(wallet_owner_code)`; from `walletList`, pick the wallet whose
+   `walletTypeName` is `Main Wallet` and whose `currencyName` equals
+   `send_currency`, and read its `value`. The call failing, no such wallet,
+   or an unreadable `value` → `BALANCE_UNAVAILABLE`. Amount below the
+   wallet's `minTransValue` (when it is above 0) → `BELOW_MINIMUM`.
+   `value < amount × (1 + balance_buffer_percent/100)` →
+   `INSUFFICIENT_FUNDS`. Else `passed(value, required, send_currency)`.
 
 ### `send(PayoutRequest): PayoutReceipt`
 
-Re-runs steps 2–4 (cheap, no I/O) so a direct `send()` cannot skip them.
+Runs the guard (steps 1–4, no I/O) so a direct `send()` cannot skip it.
 
 1. **Quote.**
    ```json
@@ -232,7 +250,7 @@ Re-runs steps 2–4 (cheap, no I/O) so a direct `send()` cannot skip them.
      "payinAmount": "<amount>", "payoutAmount": "",
      "sendCurrencyCode": "<send_currency>",
      "receiveCurrencyCode": "<currency_codes[payoutCurrency]>",
-     "settlementCurrencyCode": "<settlement_currency>",
+     "settlementCurrencyCode": "<send_currency>",
      "destinationCountryCode": "<beneficiary.address.country>",
      "sourceCountry": "<source_country>",
      "serviceTypeCode": "B2C",
@@ -243,8 +261,11 @@ Re-runs steps 2–4 (cheap, no I/O) so a direct `send()` cannot skip them.
    ```
    `paymentMode` is `Bank` for the bank rail, `Cash` otherwise (as in PCB's
    crypto and WPT examples). Any failure → `PaymentProcessingException`
-   (nothing sent). The response's `fxRateQuotation.payinAmount` must equal
-   our amount to 2 decimal places, else `PaymentProcessingException`.
+   (nothing sent). The response's `fxRateQuotation` must carry `code`,
+   `fxRateValue`, `payinAmount` and `payoutAmount`, and its `payinAmount`
+   must equal our amount to 2 decimal places, else
+   `PaymentProcessingException`. A missing `senderMargin` falls back to
+   `fxRateValue` (the docs: "in case of 0 it will reflect the fxRateValue").
 2. **Payout.**
    ```json
    {"payout": {
@@ -254,7 +275,7 @@ Re-runs steps 2–4 (cheap, no I/O) so a direct `send()` cannot skip them.
        "sendClientTrxReference": "<ref>", "descriptionText": "<ref[0..25]>",
        "paymentMode": "Bank|Cash", "sendClientCode": "<sender_code>",
        "payoutCurrency": "<receiveCurrencyCode>", "payoutAmount": "<quote.payoutAmount>",
-       "destinationCountryCode": "<…>", "settlementCurrency": "<settlement_currency>",
+       "destinationCountryCode": "<…>", "settlementCurrency": "<send_currency>",
        "sourceCountry": "<source_country>",
        "fxRateValue": "<quote.fxRateValue>", "senderMargin": "<quote.senderMargin>"
      },
@@ -269,7 +290,8 @@ Re-runs steps 2–4 (cheap, no I/O) so a direct `send()` cannot skip them.
    - 2xx, `resultCode "0"`, non-empty `payoutResponseBean.transReference` →
      `PayoutReceipt(reference: transReference, rawStatus: status, state: Sent, payload: response)`.
    - HTTP 400/401/403/422, or 2xx with `resultCode ≠ "0"` and no
-     `transReference` → `PaymentProcessingException` (definite rejection).
+     `transReference` → `PayoutRejectedException` (definite rejection;
+     the workflow records `Failed` with the message as `payout_error`).
    - Transport error, 5xx, any other status, or a 2xx body that cannot be
      read → `PayoutOutcomeUnknownException`.
 
@@ -300,9 +322,13 @@ consulted only when `statusName` is absent.
 
 ## Errors and safety
 
-- **Nothing sent** → `PaymentProcessingException`: preflight refusals,
-  missing/invalid beneficiary field, unmapped currency, token failure, quote
-  failure or amount mismatch, definite payout rejection.
+- **Nothing sent, input or config** → `PaymentProcessingException`: guard
+  failures, missing/invalid beneficiary field, unmapped currency, token
+  failure, quote failure or amount mismatch. The workflow fails the send
+  cleanly and releases its claim.
+- **Nothing sent, PCB refused** → `PayoutRejectedException`: HTTP
+  400/401/403/422 or a non-zero `resultCode` without a reference on the
+  payout call.
 - **Maybe sent** → `PayoutOutcomeUnknownException`: payout transport error,
   5xx or unreadable reply; lookup without reference or with a mismatched
   row. `WithdrawalWorkflow` already turns this into `Unknown`.
@@ -315,10 +341,10 @@ consulted only when `statusName` is absent.
   for city/state, 10 for postal code). Names, account numbers, wallet
   addresses, phone numbers and ID numbers are never altered: if one violates
   PCB's documented format the builder refuses and names the field.
-- **Logging.** Requests and responses go through `PaymentLogger` with
-  `password`, `access_token`, `Authorization`, names, DOB, ID number, phone,
-  account number and wallet address masked. `PayoutReceipt::payload` stores
-  PCB's response minus `access_token`.
+- **Stored payloads.** `PayoutReceipt::payload` is PCB's payout response or
+  enquiry row — it never contains the token or password. The driver adds no
+  logging of its own; the workflow's existing logging applies, as for the
+  other payout drivers.
 
 ## Configuration
 
@@ -333,12 +359,16 @@ Documented in the `config/cashier-core.php` connection docblock:
     // null: send `password` verbatim (PCB issued it pre-hashed).
     // 'md5': send strtoupper(md5(password)). Unconfirmed — see Open questions.
     'password_hash' => env('PCB_PASSWORD_HASH'),
+    // Only if PCB issues OAuth client credentials for the token call.
+    'oauth_client_id' => env('PCB_OAUTH_CLIENT_ID'),
+    'oauth_client_secret' => env('PCB_OAUTH_CLIENT_SECRET'),
     'sender_code' => env('PCB_SENDER_CODE'),        // senderCode / sendClientCode
     'customer_code' => env('PCB_CUSTOMER_CODE'),    // our pre-registered business
     'wallet_owner_code' => env('PCB_WALLET_OWNER_CODE'), // defaults to sender_code
     'source_country' => env('PCB_SOURCE_COUNTRY'),  // ISO-3, e.g. ARE
+    // Our wallet and settlement currency at PCB. Every withdrawal amount is
+    // sent in it, so the transaction currency must map to it.
     'send_currency' => 'USD-USA',
-    'settlement_currency' => 'USD-USA',
     // our currency code (case-insensitive) => PCB currency code
     'currency_codes' => ['usd' => 'USD-USA', 'usdt' => 'USDT', 'usdc' => 'USDC'],
     'charge_type' => 'OUR',                         // BEN | SHA | OUR
@@ -385,8 +415,8 @@ from the docs' examples.
   unsupported methods, `supports()`.
 - `tests/Feature/PayCrossBorderPayoutWorkflowTest.php` — through
   `WithdrawalWorkflow`: request → approve → `sendPayout` → `syncPayout` to
-  `Paid`; to `Failed` (customer refunded); to `Technical Failure` (`Unknown`,
-  no refund); a malformed `details['beneficiary']` refuses the send. Plus a
+  `Paid`; to `Failed` (no longer in flight, so the host may refund); to
+  `Technical Failure` (`Unknown`, still in flight); a malformed `details['beneficiary']` refuses the send. Plus a
   regression check that a Heropayment withdrawal without a beneficiary still
   sends.
 
@@ -411,5 +441,12 @@ To settle when PCB credentials and contact arrive:
 - **Short `transactionStatus` codes.** Only `IP` appears; `statusName` is the
   primary signal until the rest are known.
 - **Crypto `paymentMode`.** The examples use `Cash`; confirm.
+- **`senderUniqueId`.** The enquiry example's `senderUniqueId`
+  (`PAYXPY29FF`) has the shape of a `sendClientTrxReference`; lookup relies
+  on them being equal. If they are not, every lookup is `Unknown` (safe, but
+  every payout then needs closing by hand) — confirm on the first live
+  payout.
+- **OAuth client credentials.** Whether the token call needs HTTP Basic
+  client auth. Covered by `oauth_client_id` / `oauth_client_secret`.
 - **Whether `Technical Failure` can mean funds left the wallet.** Until
   answered it maps to `Unknown`.
