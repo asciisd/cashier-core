@@ -33,3 +33,5 @@ API details and quirks: `references/api.md`.
 - Names, account numbers, wallet addresses, phones, ID numbers: refuse, never alter. Only address text is sanitised.
 - PCB field names have typos that are load-bearing: `receiverAddresssCity`, `businessAddresssCity`.
 - The payout always sends our own amount as `payinAmount`; the quote must equal it exactly, and amounts with more than 2 decimals are refused.
+- A response carrying a `transReference` is never Rejected — it is Unknown, with the reference in the message.
+- Bank/wallet rails: `payout_address` must equal the account number / wallet phone.
