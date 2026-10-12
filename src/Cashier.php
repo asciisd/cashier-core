@@ -195,6 +195,20 @@ final class Cashier
                 'redirect_url' => 'https://members.example.com/payment/success',
                 'webhook_url' => 'https://members.example.com/api/webhooks/xoala',
             ],
+            'paycrossborder' => [
+                'base_url' => 'https://pcb.test',
+                'username' => '1000008340',
+                'password' => "{$name}-password",
+                'sender_code' => '1000008444',
+                'customer_code' => '1000002225',
+                'source_country' => 'ARE',
+                'send_currency' => 'USD-USA',
+                'currency_codes' => ['usd' => 'USD-USA', 'usdt' => 'USDT'],
+                'charge_type' => 'OUR',
+                'remittance_purpose' => 'PAYP002',
+                'source_of_fund' => 'PAYS005',
+                'relationship' => 'PAYR002',
+            ],
             default => [],
         };
 
