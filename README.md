@@ -10,10 +10,12 @@ row-locked transitions, amount-deviation holds), an approve-first withdrawal
 workflow with an audit trail, and a ledger contract that keeps your funds system
 (MT5, wallet, banking core) behind an interface you own.
 
-Seven direct PSP drivers ship bundled — **APS, Jenapay, Heropayment, Payport,
-Sticpay, MyFatoorah, Xoala** — plus internal `manual`, `bank_transfer` and
-`crypto` providers. All of them are hosted-redirect: no PAN or CVV ever
-touches your application (SAQ-A posture). Paytiko and KNET remain separate
+Eight direct PSP drivers ship bundled — **APS, Jenapay, Heropayment, Payport,
+Sticpay, MyFatoorah, Xoala, Digiblox** — plus internal `manual`,
+`bank_transfer` and `crypto` providers. All of them are hosted-redirect: no
+PAN or CVV ever touches your application (SAQ-A posture). **PayCrossBorder**
+also ships bundled as a payouts-only driver (crypto, bank and mobile-wallet
+withdrawals). Paytiko and KNET remain separate
 plugins (`asciisd/cashier-paytiko`, `asciisd/knet`) built on this core.
 
 MyFatoorah covers the GCC plus Jordan and Egypt (card, KNET, Apple Pay, Google

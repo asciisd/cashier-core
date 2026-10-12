@@ -1,3 +1,9 @@
+## 2.10.0
+
+- Payouts: new `paycrossborder` driver (PayCrossBorder, docs.paycrossborder.com), payouts only, on three rails chosen per withdrawal: crypto (wallet address + `payout_extra_id` network), bank and mobile wallet. Every payout is B2C from the business registered with PCB (`customer_code`), quoted by the exact amount sent (`payinAmount`). Amounts with more than 2 decimal places are refused, and a quote that differs from the requested amount by any fraction is refused before anything is sent. PCB sends no callbacks: the host polls `syncPayout()`, and `lookup()` needs the stored `payout_reference` (PCB's `transId`). `Technical Failure` maps to `Unknown`, not `Failed`. Ships disabled: set `withdrawals_enabled` and `withdrawal_max_amount`.
+- Payouts: `PayoutRequest` has an optional `?PayoutBeneficiary $beneficiary` (with `BeneficiaryAddress`, `BeneficiaryBank`, `BeneficiaryWallet`), populated from `withdrawal_details.beneficiary`. Absent is `null` and changes nothing for other drivers; a malformed beneficiary now refuses the send for every driver.
+- PayCrossBorder open items before going live: whether the login password is issued pre-hashed (`password_hash`), whether the token call needs OAuth client credentials (`oauth_client_id`), and whether enquiry `senderUniqueId` equals our `sendClientTrxReference` (lookup relies on it).
+
 ## 2.9.1
 
 - Heropayment: deposit callbacks now reconcile against what actually arrived. The adapter read `actuallyPaid`, a key Heropayment never sends; it reports the amount as `paidAmount`. With the key missing, `settlement_actually_paid` was never set, so an underpaid crypto deposit was credited the full invoice. `actuallyPaid` remains a fallback.
