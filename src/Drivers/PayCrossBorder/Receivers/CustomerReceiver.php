@@ -24,7 +24,7 @@ abstract class CustomerReceiver implements ReceiverBuilder
 {
     private const GENDERS = ['male', 'female', 'others'];
 
-    /** Letters in any script, plus the punctuation real names carry. */
+    /** Letters (no combining marks), plus the punctuation real names carry. */
     private const NAME_PATTERN = "/^\p{L}[\p{L} .'-]*$/u";
 
     public function assertComplete(PayoutRequest $request): void

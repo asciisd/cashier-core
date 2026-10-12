@@ -129,3 +129,21 @@ it('requires bank details on the bank rail and a phone on the wallet rail', func
     expect(fn () => (new WalletReceiver)->assertComplete($noPhone))
         ->toThrow(PaymentProcessingException::class, 'phone is required for wallet payouts');
 });
+
+it('refuses a payout_address that is not the bank account or wallet phone being paid', function () {
+    $bank = PayCrossBorderApi::request(['payoutAddress' => 'AE000000000000000000000'], PayCrossBorderApi::bankBeneficiary());
+
+    expect(fn () => (new BankReceiver)->assertComplete($bank))
+        ->toThrow(PaymentProcessingException::class, 'payout_address');
+
+    $wallet = PayCrossBorderApi::request(['payoutAddress' => '9179999999'], PayCrossBorderApi::walletBeneficiary());
+
+    expect(fn () => (new WalletReceiver)->assertComplete($wallet))
+        ->toThrow(PaymentProcessingException::class, 'payout_address');
+});
+
+it('accepts the wallet phone with or without the dial code', function (string $address) {
+    $request = PayCrossBorderApi::request(['payoutAddress' => $address], PayCrossBorderApi::walletBeneficiary());
+
+    expect(fn () => (new WalletReceiver)->assertComplete($request))->not->toThrow(PaymentProcessingException::class);
+})->with(['bare phone' => ['9171234567'], 'plus dial code' => ['+639171234567'], 'dial code' => ['639171234567']]);

@@ -256,13 +256,18 @@ final class PayCrossBorderApi
      */
     public static function request(array $overrides = [], ?array $beneficiary = null): PayoutRequest
     {
+        // Bank and wallet payouts must name the destination in payout_address:
+        // default it to the beneficiary's account number or wallet phone.
+        $destination = $beneficiary['bank']['accountNumber']
+            ?? (isset($beneficiary['wallet']) ? ($beneficiary['phone'] ?? null) : null);
+
         return new PayoutRequest(...array_merge([
             'externalOrderId' => 'WD-01TEST',
             'customerId' => '70001',
             'amount' => '100.00',
             'currency' => 'USD',
             'payoutCurrency' => 'usdt',
-            'payoutAddress' => 'TXyzCustomerWalletAddress000001',
+            'payoutAddress' => $destination ?? 'TXyzCustomerWalletAddress000001',
             'payoutExtraId' => 'TRC20',
             'beneficiary' => PayoutBeneficiary::fromArray($beneficiary ?? self::beneficiary()),
         ], $overrides));

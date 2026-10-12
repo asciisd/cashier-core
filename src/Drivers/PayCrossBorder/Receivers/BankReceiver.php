@@ -10,7 +10,8 @@ use Asciisd\CashierCore\Drivers\PayCrossBorder\Rail;
 
 /**
  * PAYOUT-FIAT.md: credit a bank account. The destination country is the
- * beneficiary's address country.
+ * beneficiary's address country. The money goes to bank.accountNumber, but
+ * the admin approves payout_address, so the two must be equal.
  *
  * Only the rules the payout page states inline are encoded below. The
  * per-country "Local RAIL" tables (COUNTRYVALIDATIONS.md) are not: PCB
@@ -36,6 +37,10 @@ final class BankReceiver extends CustomerReceiver
     {
         $bank = $beneficiary->bank ?? throw self::invalid('bank', 'is required for bank payouts');
         $country = $beneficiary->address->country;
+
+        if (trim((string) $request->payoutAddress) !== $bank->accountNumber) {
+            throw self::invalid('payout_address', 'must equal bank.accountNumber, the account being paid');
+        }
 
         if (! preg_match('/^[A-Za-z0-9]{1,50}$/', $bank->accountNumber)) {
             throw self::invalid('bank.accountNumber', 'must be 1-50 letters or digits, without spaces');

@@ -11,6 +11,8 @@ use Asciisd\CashierCore\Drivers\PayCrossBorder\Rail;
 /**
  * PAYOUT-WPT.md: credit a mobile wallet. The beneficiary's phone is the
  * wallet number; the provider comes from the beneficiary's wallet details.
+ * The money goes to that phone, but the admin approves payout_address, so
+ * payout_address must equal the phone (bare or with its dial code).
  */
 final class WalletReceiver extends CustomerReceiver
 {
@@ -27,6 +29,14 @@ final class WalletReceiver extends CustomerReceiver
 
         if ($beneficiary->phone === null) {
             throw self::invalid('phone', 'is required for wallet payouts');
+        }
+
+        $address = trim((string) $request->payoutAddress);
+        $phone = $beneficiary->phone;
+        $dialCode = (string) $beneficiary->dialCode;
+
+        if (! in_array($address, [$phone, ltrim($dialCode, '+').$phone, $dialCode.$phone], true)) {
+            throw self::invalid('payout_address', 'must equal the wallet phone number being paid');
         }
     }
 
