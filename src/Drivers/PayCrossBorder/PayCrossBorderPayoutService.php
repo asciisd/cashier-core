@@ -22,7 +22,8 @@ use Illuminate\Http\Client\Response;
  * Four facts shape this class. A payout needs a fresh quote — quotes live
  * minutes — so send() always quotes first and pins the quote to our exact
  * amount. There is no idempotency key, so the payout POST is never retried
- * and anything ambiguous is Unknown. There is no callback, so the host polls
+ * and anything ambiguous is Unknown — including every answer that carries a
+ * PCB transaction reference, which is never a rejection. There is no callback, so the host polls
  * lookup(). And PCB can only be searched by its own transId, so lookup()
  * without one throws, and every answer is tied back to our reference.
  */
@@ -38,7 +39,11 @@ final class PayCrossBorderPayoutService implements SendsPayouts
 
     private const DEFAULT_BUFFER_PERCENT = '2';
 
-    /** Definite refusals of the payout POST: nothing created. Every other 4xx is ambiguous. */
+    /**
+     * Statuses that refuse the payout POST — but only when the body carries no
+     * transaction reference. With one, PCB may have created the payout, so
+     * it is Unknown. Every other non-2xx status is ambiguous too.
+     */
     private const REJECTED_STATUSES = [400, 401, 403, 422];
 
     private const CHARGE_TYPES = ['BEN', 'SHA', 'OUR'];
@@ -134,6 +139,9 @@ final class PayCrossBorderPayoutService implements SendsPayouts
         $reference = self::reference($request->externalOrderId);
 
         $quote = $this->quote($amount, $receiveCurrency, $country, $rail);
+        $payoutAmount = (string) $quote['payoutAmount'];
+        $fxRate = (string) $quote['fxRateValue'];
+        $margin = (string) ($quote['senderMargin'] ?? $fxRate);
 
         $body = [
             'transactionInfo' => [
@@ -146,13 +154,13 @@ final class PayCrossBorderPayoutService implements SendsPayouts
                 'paymentMode' => $rail->paymentMode(),
                 'sendClientCode' => $this->setting('sender_code'),
                 'payoutCurrency' => $receiveCurrency,
-                'payoutAmount' => (string) $quote['payoutAmount'],
+                'payoutAmount' => $payoutAmount,
                 'destinationCountryCode' => $country,
                 'settlementCurrency' => $this->sendCurrency(),
                 'sourceCountry' => $this->setting('source_country'),
-                'fxRateValue' => (string) $quote['fxRateValue'],
+                'fxRateValue' => $fxRate,
                 // The docs: "in case of 0 it will reflect the fxRateValue".
-                'senderMargin' => (string) ($quote['senderMargin'] ?? $quote['fxRateValue']),
+                'senderMargin' => $margin,
             ],
             'sender' => ['business' => [
                 'isAutoRegistered' => false,
@@ -345,10 +353,30 @@ final class PayCrossBorderPayoutService implements SendsPayouts
             ));
         }
 
+        // Validated decimal strings replace the raw values, so a non-scalar
+        // can never reach a string cast when the body is built.
+        foreach (['payoutAmount', 'fxRateValue', 'senderMargin'] as $key) {
+            if ($key === 'senderMargin' && ($quote[$key] ?? null) === null) {
+                continue;
+            }
+
+            $number = self::decimal($quote[$key] ?? null);
+
+            if ($number === null || bccomp($number, '0', self::SCALE) <= 0) {
+                throw new PaymentProcessingException("PayCrossBorder returned a quote with an invalid {$key}. Nothing was sent.");
+            }
+
+            $quote[$key] = $number;
+        }
+
         return $quote;
     }
 
     /**
+     * Sent only for a 2xx with resultCode "0" and a reference. Rejected only
+     * when PCB gave no reference: a 2xx with a non-zero resultCode, or a
+     * refusal status. Anything carrying a reference is otherwise Unknown.
+     *
      * @throws PayoutRejectedException
      * @throws PayoutOutcomeUnknownException
      */
@@ -375,21 +403,35 @@ final class PayCrossBorderPayoutService implements SendsPayouts
 
             // The reference is the only handle on the payout. A 2xx without
             // one is as ambiguous as a 5xx, not a success.
-            throw new PayoutOutcomeUnknownException(
-                'PayCrossBorder answered the payout without a transaction reference ('.PayCrossBorderClient::describe($response).'). '
-                .'It may have been created — do not resend before checking its status.',
-            );
+            throw new PayoutOutcomeUnknownException($this->unknownMessage($reference, $response, 'answered the payout'));
         }
 
-        if (in_array($response->status(), self::REJECTED_STATUSES, true)) {
+        if ($reference === '' && in_array($response->status(), self::REJECTED_STATUSES, true)) {
             throw new PayoutRejectedException('PayCrossBorder refused the payout: '.PayCrossBorderClient::describe($response));
         }
 
-        throw new PayoutOutcomeUnknownException(sprintf(
-            'PayCrossBorder returned %d for the payout request: %s. It may have been created — do not resend before checking its status.',
-            $response->status(),
-            PayCrossBorderClient::describe($response),
-        ));
+        throw new PayoutOutcomeUnknownException($this->unknownMessage($reference, $response, 'returned '.$response->status().' for the payout request'));
+    }
+
+    /**
+     * An Unknown that keeps PCB's reference when there is one: it is the only
+     * way to search PCB, and the admin's way out is linkPayoutReference().
+     */
+    private function unknownMessage(string $reference, Response $response, string $what): string
+    {
+        $describe = PayCrossBorderClient::describe($response);
+
+        if ($reference !== '') {
+            return "PayCrossBorder returned transaction {$reference} (HTTP {$response->status()}, {$describe}). "
+                .'It may have been created — link it with that reference before any resend.';
+        }
+
+        if ($response->successful()) {
+            return "PayCrossBorder {$what} without a transaction reference ({$describe}). "
+                .'It may have been created — do not resend before checking its status.';
+        }
+
+        return "PayCrossBorder {$what}: {$describe}. It may have been created — do not resend before checking its status.";
     }
 
     /**

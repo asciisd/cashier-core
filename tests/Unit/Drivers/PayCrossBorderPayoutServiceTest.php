@@ -230,6 +230,9 @@ it('refuses to send when the quote is unusable', function (array|string $quote, 
     'different amount' => [['json' => PayCrossBorderApi::quote(['payinAmount' => '99.50'])], 'quoted 99.50 for a 100.00 payout'],
     'no code' => [['json' => PayCrossBorderApi::quote(['code' => null])], 'without code'],
     'timeout' => ['timeout', 'cURL error 28'],
+    'zero payoutAmount' => [['json' => PayCrossBorderApi::quote(['payoutAmount' => '0'])], 'invalid payoutAmount'],
+    'negative fxRateValue' => [['json' => PayCrossBorderApi::quote(['fxRateValue' => '-1'])], 'invalid fxRateValue'],
+    'non-numeric senderMargin' => [['json' => PayCrossBorderApi::quote(['senderMargin' => 'abc'])], 'invalid senderMargin'],
 ]);
 
 it('refuses a quote that drifts by less than a cent from the requested amount', function () {
@@ -249,6 +252,8 @@ it('treats PCB refusals as rejections', function (array $payout, string $message
 })->with([
     '400' => [['json' => ['resultCode' => '1001', 'resultDescription' => 'Invalid wallet'], 'status' => 400], 'Invalid wallet'],
     '422' => [['json' => ['resultCode' => '1002', 'resultDescription' => 'Bad receiver'], 'status' => 422], 'Bad receiver'],
+    '401' => [['json' => ['resultCode' => '1004', 'resultDescription' => 'Not authorised'], 'status' => 401], 'Not authorised'],
+    '403' => [['json' => ['resultCode' => '1005', 'resultDescription' => 'Forbidden sender'], 'status' => 403], 'Forbidden sender'],
     'result code in a 200' => [['json' => ['resultCode' => '1003', 'resultDescription' => 'Screening failed']], 'Screening failed'],
 ]);
 
@@ -263,6 +268,9 @@ it('treats ambiguous payout answers as unknown', function (array|string $payout,
     '409' => [['status' => 409], 'returned 409'],
     'success without reference' => [['json' => ['resultCode' => '0', 'payoutResponseBean' => []]], 'without a transaction reference'],
     'unreadable body' => [['body' => '<html>gateway</html>'], 'without a transaction reference'],
+    '400 with a reference' => [['json' => ['resultCode' => '1001', 'resultDescription' => 'Invalid wallet', 'payoutResponseBean' => ['transReference' => '197930']], 'status' => 400], 'returned transaction 197930'],
+    '200 refused code with a reference' => [['json' => ['resultCode' => '1003', 'resultDescription' => 'Screening failed', 'payoutResponseBean' => ['transReference' => '197930']]], 'returned transaction 197930'],
+    '500 with a reference' => [['json' => ['resultCode' => '500', 'payoutResponseBean' => ['transReference' => '197930']], 'status' => 500], 'returned transaction 197930'],
 ]);
 
 it('never retries the payout POST', function () {

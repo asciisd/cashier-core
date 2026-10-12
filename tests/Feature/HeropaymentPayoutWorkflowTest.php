@@ -792,3 +792,20 @@ it('fails cleanly and releases the claim when the beneficiary is malformed', fun
 
     Http::assertNotSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal'));
 });
+
+it('fails cleanly when the beneficiary is not an object', function () {
+    HeropaymentPayoutApi::fake();
+
+    $transaction = hpWithdrawal(['withdrawal_details' => [
+        'payout_address' => 'TXyzCustomer',
+        'payout_currency' => 'usdttrc20',
+        'beneficiary' => 'Kuldeep',
+    ]]);
+
+    $result = hpWorkflow()->sendPayout($transaction, hpActor());
+
+    expect($result->ok)->toBeFalse()
+        ->and($result->message)->toContain('beneficiary is invalid: it must be an object');
+
+    Http::assertNotSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal'));
+});
