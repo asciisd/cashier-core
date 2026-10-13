@@ -232,6 +232,44 @@ return [
     |     'balance_buffer_percent' => env('HEROPAYMENT_BALANCE_BUFFER_PERCENT', 2),
     | ],
     |
+    | PayCrossBorder is payouts only: crypto (wallet + network), bank and
+    | mobile-wallet rails, B2C from our business registered with PCB. There
+    | are no callbacks — the host polls syncPayout(). Besides payout_address
+    | and payout_currency (and payout_extra_id, the crypto network), the host
+    | stores the payee as withdrawal_details.beneficiary (see
+    | PayoutBeneficiary::fromArray()); bank details pick the bank rail, wallet
+    | details the wallet rail, neither the crypto rail.
+    |
+    | 'paycrossborder' => [
+    |     'driver' => 'paycrossborder',
+    |     'base_url' => env('PCB_BASE_URL'),          // required: the docs only say "host"
+    |     'username' => env('PCB_USERNAME'),
+    |     'password' => env('PCB_PASSWORD'),
+    |     // null sends `password` as issued; 'md5' sends strtoupper(md5(password)).
+    |     'password_hash' => env('PCB_PASSWORD_HASH'),
+    |     // Only if PCB issues OAuth client credentials for the token call.
+    |     'oauth_client_id' => env('PCB_OAUTH_CLIENT_ID'),
+    |     'oauth_client_secret' => env('PCB_OAUTH_CLIENT_SECRET'),
+    |     'sender_code' => env('PCB_SENDER_CODE'),    // senderCode / sendClientCode
+    |     'customer_code' => env('PCB_CUSTOMER_CODE'), // our registered business
+    |     'wallet_owner_code' => env('PCB_WALLET_OWNER_CODE'), // defaults to sender_code
+    |     'source_country' => env('PCB_SOURCE_COUNTRY'), // ISO-3, e.g. ARE
+    |     // Our wallet and settlement currency at PCB. Every withdrawal is sent
+    |     // in it, so the transaction currency must map to it.
+    |     'send_currency' => 'USD-USA',
+    |     // our currency code (case-insensitive) => PCB currency code
+    |     'currency_codes' => ['usd' => 'USD-USA', 'usdt' => 'USDT', 'usdc' => 'USDC'],
+    |     'charge_type' => 'OUR',                     // BEN | SHA | OUR
+    |     'remittance_purpose' => 'PAYP002',          // master-API codes
+    |     'source_of_fund' => 'PAYS005',
+    |     'relationship' => 'PAYR002',
+    |     // Real money and no confirmed sandbox. Off until proven; every
+    |     // payout is capped at withdrawal_max_amount.
+    |     'withdrawals_enabled' => env('PCB_WITHDRAWALS_ENABLED', false),
+    |     'withdrawal_max_amount' => env('PCB_WITHDRAWAL_MAX_AMOUNT'),
+    |     'balance_buffer_percent' => env('PCB_BALANCE_BUFFER_PERCENT', 2),
+    | ],
+    |
     */
     'connections' => [],
 

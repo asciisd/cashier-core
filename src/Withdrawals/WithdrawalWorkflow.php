@@ -10,6 +10,7 @@ use Asciisd\CashierCore\Contracts\CustomerContract;
 use Asciisd\CashierCore\Contracts\FundsLedger;
 use Asciisd\CashierCore\Contracts\SendsPayouts;
 use Asciisd\CashierCore\DataObjects\Actor;
+use Asciisd\CashierCore\DataObjects\PayoutBeneficiary;
 use Asciisd\CashierCore\DataObjects\PayoutPreflight;
 use Asciisd\CashierCore\DataObjects\PayoutReceipt;
 use Asciisd\CashierCore\DataObjects\PayoutRequest;
@@ -41,6 +42,7 @@ use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
 use RuntimeException;
 use Throwable;
 
@@ -1091,7 +1093,36 @@ class WithdrawalWorkflow
             payoutAddress: $address,
             payoutExtraId: $extraId === '' ? null : $extraId,
             customerEmail: $email === '' ? null : $email,
+            beneficiary: $this->payoutBeneficiary($details),
         );
+    }
+
+    /**
+     * The host's `beneficiary` details, for drivers that need the payee's
+     * identity. Absent is null — most drivers never read it. Malformed
+     * refuses the send for every driver: the host meant to send one.
+     *
+     * @param  array<string, mixed>  $details
+     *
+     * @throws PaymentProcessingException
+     */
+    private function payoutBeneficiary(array $details): ?PayoutBeneficiary
+    {
+        $data = $details['beneficiary'] ?? null;
+
+        if ($data === null) {
+            return null;
+        }
+
+        if (! is_array($data)) {
+            throw new PaymentProcessingException("This withdrawal's beneficiary is invalid: it must be an object.");
+        }
+
+        try {
+            return PayoutBeneficiary::fromArray($data);
+        } catch (InvalidArgumentException $e) {
+            throw new PaymentProcessingException("This withdrawal's beneficiary is invalid: {$e->getMessage()}");
+        }
     }
 
     /**

@@ -751,3 +751,61 @@ it('marks an enum-cast withdrawal payout failed on a failed callback, without th
     Event::assertDispatched(WithdrawalPayoutFailed::class);
     expect(AdminAction::query()->where('action', 'withdrawal.payout-failed')->exists())->toBeTrue();
 });
+
+it('sends unchanged when the withdrawal also carries a beneficiary', function () {
+    HeropaymentPayoutApi::fake();
+
+    $transaction = hpWithdrawal(['withdrawal_details' => [
+        'payout_address' => 'TXyzCustomer',
+        'payout_currency' => 'usdttrc20',
+        'beneficiary' => [
+            'firstName' => 'Kuldeep',
+            'lastName' => 'Singh',
+            'gender' => 'male',
+            'nationality' => 'ARE',
+            'address' => ['line1' => 'Villa 12', 'city' => 'Dubai', 'state' => 'Dubai', 'postalCode' => '00000', 'country' => 'ARE'],
+        ],
+    ]]);
+
+    $result = hpWorkflow()->sendPayout($transaction, hpActor());
+
+    expect($result->ok)->toBeTrue();
+    Http::assertSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal')
+        && ! isset($request['beneficiary']));
+});
+
+it('fails cleanly and releases the claim when the beneficiary is malformed', function () {
+    HeropaymentPayoutApi::fake();
+
+    $transaction = hpWithdrawal(['withdrawal_details' => [
+        'payout_address' => 'TXyzCustomer',
+        'payout_currency' => 'usdttrc20',
+        'beneficiary' => ['firstName' => 'Kuldeep'],
+    ]]);
+
+    $result = hpWorkflow()->sendPayout($transaction, hpActor());
+
+    expect($result->ok)->toBeFalse()
+        ->and($result->message)->toContain("beneficiary is invalid: address is required")
+        ->and($transaction->fresh()->payout_state)->toBeNull()
+        ->and($transaction->fresh()->metadata)->not->toHaveKey(TransferClaim::METADATA_KEY);
+
+    Http::assertNotSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal'));
+});
+
+it('fails cleanly when the beneficiary is not an object', function () {
+    HeropaymentPayoutApi::fake();
+
+    $transaction = hpWithdrawal(['withdrawal_details' => [
+        'payout_address' => 'TXyzCustomer',
+        'payout_currency' => 'usdttrc20',
+        'beneficiary' => 'Kuldeep',
+    ]]);
+
+    $result = hpWorkflow()->sendPayout($transaction, hpActor());
+
+    expect($result->ok)->toBeFalse()
+        ->and($result->message)->toContain('beneficiary is invalid: it must be an object');
+
+    Http::assertNotSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal'));
+});
