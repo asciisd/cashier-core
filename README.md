@@ -18,6 +18,24 @@ also ships bundled as a payouts-only driver (crypto, bank and mobile-wallet
 withdrawals). KNET remains a separate
 plugin (`asciisd/knet`) built on this core.
 
+<table align="center">
+  <tr>
+    <td align="center" width="33%"><a href="https://aps.money"><picture><source media="(prefers-color-scheme: dark)" srcset="art/logos/aps-dark.svg"><img src="art/logos/aps-light.svg" alt="APS" height="40"></picture></a></td>
+    <td align="center" width="33%"><a href="https://www.jenapay.com"><picture><source media="(prefers-color-scheme: dark)" srcset="art/logos/jenapay-dark.png"><img src="art/logos/jenapay-light.png" alt="Jenapay" height="39"></picture></a></td>
+    <td align="center" width="33%"><a href="https://heropayments.io"><picture><source media="(prefers-color-scheme: dark)" srcset="art/logos/heropayments-dark.svg"><img src="art/logos/heropayments-light.svg" alt="Heropayments" height="33"></picture></a></td>
+  </tr>
+  <tr>
+    <td align="center" width="33%"><a href="https://payport.io"><picture><source media="(prefers-color-scheme: dark)" srcset="art/logos/payport-dark.svg"><img src="art/logos/payport-light.svg" alt="Payport" height="32"></picture></a></td>
+    <td align="center" width="33%"><a href="https://www.sticpay.com"><img src="art/logos/sticpay.svg" alt="Sticpay" height="30"></a></td>
+    <td align="center" width="33%"><a href="https://www.myfatoorah.com"><picture><source media="(prefers-color-scheme: dark)" srcset="art/logos/myfatoorah-dark.png"><img src="art/logos/myfatoorah-light.png" alt="MyFatoorah" height="30"></picture></a></td>
+  </tr>
+  <tr>
+    <td align="center" width="33%"><a href="https://xoala.com"><picture><source media="(prefers-color-scheme: dark)" srcset="art/logos/xoala-dark.svg"><img src="art/logos/xoala-light.svg" alt="Xoala" height="33"></picture></a></td>
+    <td align="center" width="33%"><a href="https://digiblox.io"><picture><source media="(prefers-color-scheme: dark)" srcset="art/logos/digiblox-dark.svg"><img src="art/logos/digiblox-light.svg" alt="Digiblox" height="40"></picture></a></td>
+    <td align="center" width="33%"><a href="https://www.paycrossborder.com"><img src="art/logos/paycrossborder.svg" alt="PayCrossBorder" height="39"></a></td>
+  </tr>
+</table>
+
 MyFatoorah covers the GCC plus Jordan and Egypt (card, KNET, Apple Pay, Google
 Pay) on its V3 API,
 and supports deposits, webhooks and sync — not refunds. It takes **one
