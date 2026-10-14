@@ -119,20 +119,6 @@ function createSnapshotFromProcessorResponse(array $processorResponse): PaymentM
     };
 }
 
-function createSnapshotFromPaytikoResponse(array $paytikoResponse): PaymentMethodSnapshot
-{
-    $method = $paytikoResponse['payment_method'];
-    
-    return match ($method['type']) {
-        'fawry' => PaymentMethodSnapshot::fromDigitalWallet('fawry'),
-        'vodafone' => PaymentMethodSnapshot::fromDigitalWallet('vodafone'),
-        'instapay' => PaymentMethodSnapshot::fromDigitalWallet('instapay'),
-        'binance_pay' => PaymentMethodSnapshot::fromDigitalWallet('binance_pay'),
-        'wire_transfer' => PaymentMethodSnapshot::fromBankTransfer('wire_transfer'),
-        default => PaymentMethodSnapshot::fromDigitalWallet('other'),
-    };
-}
-
 // Example 7: Migration strategy
 /**
  * For existing transactions with payment_method_id:

@@ -16,7 +16,7 @@ PCI posture. The host owns its users, its funds system, and every side effect (m
 Seven direct PSP drivers ship bundled — **APS, Jenapay, Heropayment, Payport, Sticpay, MyFatoorah,
 Xoala** — plus internal `manual`, `bank_transfer`, `crypto`. All are hosted-redirect (SAQ-A: no
 PAN/CVV in the app).
-Paytiko and KNET are separate plugins that register their drivers into this core.
+KNET is a separate plugin that registers its driver into this core.
 
 ## ⚠️ v1 is gone — do not reintroduce it
 
@@ -67,7 +67,7 @@ Casts/EncryptedArray           — writes obey the flag; reads accept ciphertext
 
 This is the single most important distinction in v2.
 
-- A **driver** is an integration: `aps`, `payport`, `paytiko`. It is the plain string persisted to
+- A **driver** is an integration: `aps`, `payport`, `myfatoorah`. It is the plain string persisted to
   `transactions.provider`.
 - A **connection** is one PSP *account* using that driver, with its own credentials and routing. It
   is persisted to `transactions.connection`.

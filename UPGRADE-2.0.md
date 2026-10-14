@@ -16,7 +16,7 @@ order you will hit them.
 |---|---|
 | `Factory\PaymentFactory` + `PaymentFactoryInterface` + `Facades\PaymentFactory` | `Connections\ConnectionRegistry` (container-bound; also aliased as `cashier.connections`) |
 | `Registry\PaymentProviderRegistry` reading app-owned config | Deprecated subclass of `ConnectionRegistry` — existing injection sites keep working; migrate the type-hint when convenient |
-| `Processors\PaytikoProcessor` (dead code) | The `asciisd/cashier-paytiko` plugin |
+| `Processors\PaytikoProcessor` (dead code) | Removed — Paytiko is no longer supported |
 | `Models\PaymentMethod`, `Traits\Payable` | Host-owned; the package only needs `FeeConfigurationContract` from your method catalog |
 | `Services\TransactionService` | `Services\Webhooks\WebhookProcessor` (locked transitions, guards, credit) |
 | `"version"` key in composer.json | Tagged releases |
@@ -121,8 +121,8 @@ math is unchanged from the extracted app implementation (gross-up solved so
 
 ## Plugins
 
-`asciisd/cashier-paytiko` and `asciisd/knet` require their own 2.x-compatible
-majors (core `^2.0`); update them together with the core. Plugin processors
+`asciisd/knet` requires its own 2.x-compatible
+major (core `^2.0`); update it together with the core. Plugin processors
 implement `PreparesChargeData` for their charge-shaping quirks and register
 their driver string in `cashier-core.drivers`.
 

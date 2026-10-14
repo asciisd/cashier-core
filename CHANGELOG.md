@@ -1,3 +1,8 @@
+## 3.0.0
+
+- **Breaking:** Paytiko support is removed from the core. The Paytiko-specific `PaymentLogger` methods are gone: `paytikoTransactionNotFoundForSuccess`, `paytikoTransactionConfirmedSuccessful`, `noTradingAccountForPaytikoTransfer`, `paytikoFundsTransferred`, `paytikoFundsTransferFailed`, `paytikoFundsTransferException`, `paytikoTransactionNotFoundForFailure`, `paytikoTransactionUpdatedToFailed`, `paytikoProviderCreationFailed`, `webhookTransactionNotFound`, `transactionUpdatedFromWebhook`, `paymentMethodExtractionFailed`, `novaPaytikoResyncInitiated`, `novaPaytikoResyncFailed`, `rawPayloadTransactionNotFound` and `rawPayloadPersisted`. The `asciisd/cashier-paytiko` plugin is not supported on 3.x; stay on 2.x if you depend on it.
+- Docs, config comments and examples no longer reference Paytiko.
+
 ## 2.10.0
 
 - Payouts: new `paycrossborder` driver (PayCrossBorder, docs.paycrossborder.com), payouts only, on three rails chosen per withdrawal: crypto (wallet address + `payout_extra_id` network), bank and mobile wallet. Every payout is B2C from the business registered with PCB (`customer_code`), quoted by the exact amount sent (`payinAmount`). Amounts with more than 2 decimal places are refused, and a quote that differs from the requested amount by any fraction is refused before anything is sent. PCB sends no callbacks: the host polls `syncPayout()`, and `lookup()` needs the stored `payout_reference` (PCB's `transId`). `Technical Failure` maps to `Unknown`, not `Failed`. Ships disabled: set `withdrawals_enabled` and `withdrawal_max_amount`.

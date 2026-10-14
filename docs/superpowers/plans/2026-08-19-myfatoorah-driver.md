@@ -2925,8 +2925,8 @@ Modify `README.md:13-17`. Replace:
 Five direct PSP drivers ship bundled — **APS, Jenapay, Heropayment, Payport,
 Sticpay** — plus internal `manual`, `bank_transfer` and `crypto` providers. All
 of them are hosted-redirect: no PAN or CVV ever touches your application
-(SAQ-A posture). Paytiko and KNET remain separate plugins
-(`asciisd/cashier-paytiko`, `asciisd/knet`) built on this core.
+(SAQ-A posture). KNET remains a separate plugin
+(`asciisd/knet`) built on this core.
 ```
 
 with:
@@ -2935,8 +2935,8 @@ with:
 Six direct PSP drivers ship bundled — **APS, Jenapay, Heropayment, Payport,
 Sticpay, MyFatoorah** — plus internal `manual`, `bank_transfer` and `crypto`
 providers. All of them are hosted-redirect: no PAN or CVV ever touches your
-application (SAQ-A posture). Paytiko and KNET remain separate plugins
-(`asciisd/cashier-paytiko`, `asciisd/knet`) built on this core.
+application (SAQ-A posture). KNET remains a separate plugin
+(`asciisd/knet`) built on this core.
 
 MyFatoorah covers the GCC (card, KNET, Apple Pay, Google Pay) on its V3 API,
 and supports deposits, webhooks and sync — not refunds. It takes **one

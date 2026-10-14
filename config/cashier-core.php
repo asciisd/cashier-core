@@ -279,7 +279,7 @@ return [
     |--------------------------------------------------------------------------
     |
     | driver string => provider class. Bundled drivers are merged in by the
-    | service provider; plugin packages (asciisd/cashier-paytiko, asciisd/knet)
+    | service provider; plugin packages (e.g. asciisd/knet)
     | append theirs here. A connection whose config carries a `class` key wins
     | over this map.
     |

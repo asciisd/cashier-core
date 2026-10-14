@@ -7,8 +7,8 @@ host's funds system (MT5, wallet, banking core) behind an interface the host own
 
 Six direct PSP drivers ship bundled — **APS, Jenapay, Heropayment, Payport, Sticpay, MyFatoorah** — plus
 internal `manual`, `bank_transfer` and `crypto` providers. All are hosted-redirect: no PAN or CVV
-touches the application (SAQ-A posture). Paytiko and KNET are separate plugins
-(`asciisd/cashier-paytiko`, `asciisd/knet`) that register their drivers into this core.
+touches the application (SAQ-A posture). KNET is a separate plugin
+(`asciisd/knet`) that registers its driver into this core.
 
 ### v1 → v2: what is gone
 
@@ -22,7 +22,7 @@ touches the application (SAQ-A posture). Paytiko and KNET are separate plugins
 
 ### Connections vs drivers (read before touching any charge path)
 
-A **driver** is an integration (`aps`, `payport`, `paytiko`). A **connection** is one PSP *account*
+A **driver** is an integration (`aps`, `payport`, `myfatoorah`). A **connection** is one PSP *account*
 using that driver, with its own credentials and routing. Two APS merchant accounts are two
 connections sharing one driver.
 
