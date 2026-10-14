@@ -13,7 +13,7 @@ readonly class RefundResult
         public string $refundId,
         public string $originalTransactionId,
         public RefundStatus $status,
-        public int $amount,
+        public float $amount,
         public string $currency,
         public ?string $message = null,
         public ?array $metadata = null,

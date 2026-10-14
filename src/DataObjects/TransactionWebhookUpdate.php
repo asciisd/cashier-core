@@ -21,7 +21,7 @@ readonly class TransactionWebhookUpdate
         public ?array $metadata = null,
         public ?string $errorCode = null,
         public ?string $errorMessage = null,
-        public ?int $amount = null,
+        public ?float $amount = null,
         public ?string $currency = null,
         public ?string $description = null,
         public array $additionalAttributes = [],

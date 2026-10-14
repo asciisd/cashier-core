@@ -18,12 +18,12 @@ interface PaymentProcessorInterface
     /**
      * Refund a payment
      */
-    public function refund(string $transactionId, ?int $amount = null): RefundResult;
+    public function refund(string $transactionId, ?float $amount = null): RefundResult;
 
     /**
      * Capture a previously authorized payment
      */
-    public function capture(string $transactionId, ?int $amount = null): PaymentResult;
+    public function capture(string $transactionId, ?float $amount = null): PaymentResult;
 
     /**
      * Authorize a payment without capturing
