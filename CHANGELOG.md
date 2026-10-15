@@ -1,4 +1,4 @@
-## Unreleased
+## 3.1.0
 
 - APS: signed-request auth. A connection with `private_key` (ES256 / P-256 PEM — contents, `\n`-escaped env value, or a file path) signs every request with `X-App-Token`, `X-Sign-Timestamp` and `X-Signature`, APS's current scheme, and sends no `X-App-Secret`. `app_secret` is now optional: connections that set only it keep the deprecated header auth unchanged, and the provider requires one of the two. New APS accounts are issued no app secret, so they need `private_key`.
 - APS: callback verification now rejects every callback when neither `callback_secret` nor `app_secret` is set, instead of checking an HMAC under an empty key.
