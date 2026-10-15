@@ -34,6 +34,12 @@ return [
     |     'base_url' => env('APS_BASE_URL'),  // defaults to the production host
     |     'merchant_guid' => env('APS_MERCHANT_GUID'),
     |     'app_token' => env('APS_APP_TOKEN'),
+    |     // ES256 private key (PEM, `\n`-escaped PEM, or a file path) that
+    |     // signs every request. New APS accounts get no app secret and
+    |     // need this; the APP-TOKEN is the one issued for its public key.
+    |     'private_key' => env('APS_PRIVATE_KEY'),
+    |     // Deprecated header auth, for accounts onboarded before signed
+    |     // requests. Ignored for outbound auth once `private_key` is set.
     |     'app_secret' => env('APS_APP_SECRET'),
     |     // Signs callbacks, and is issued separately from the app secret.
     |     // Without it, verification falls back to the app secret and rejects
@@ -64,7 +70,7 @@ return [
     |     'base_url' => env('APS_APPLEPAY_BASE_URL'),
     |     'merchant_guid' => env('APS_APPLEPAY_MERCHANT_GUID'),
     |     'app_token' => env('APS_APPLEPAY_APP_TOKEN'),
-    |     'app_secret' => env('APS_APPLEPAY_APP_SECRET'),
+    |     'private_key' => env('APS_APPLEPAY_PRIVATE_KEY'),
     |     'callback_secret' => env('APS_APPLEPAY_CALLBACK_SECRET'),
     |     // From `GET /api/v3/{merchantGuid}/info` on this account.
     |     'deposit_method' => env('APS_APPLEPAY_DEPOSIT_METHOD'),

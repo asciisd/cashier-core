@@ -6,10 +6,13 @@ everything else is overwritten on regeneration.
 
 | File | Source URL | Fetched |
 |---|---|---|
-| `h2h.md` | https://merchant.aps.money/developers/docs/h2h/integration | 2026-08-11 |
-| `fpf-v3.md` | https://merchant.aps.money/developers/docs/fpf-v3/integration | 2026-08-11 |
+| `h2h.md` | https://merchant.aps.money/developers/docs/h2h/integration | 2026-10-15 |
+| `fpf-v3.md` | https://merchant.aps.money/developers/docs/fpf-v3/integration | 2026-10-15 |
 
 Generator: Docusaurus v3.0.1. Requires `pandoc` and Python `beautifulsoup4`.
+
+Fenced blocks inside a blockquote (the `[DEPRECATED]` legacy-auth examples)
+carry a `> ` prefix and are deliberately not counted by the verifier below.
 
 **Not mirrored:** `https://merchant.aps.money/developers/docs/new-documentation/integration`
 ("Payment methods documentation"). The page server-renders a title and nothing
@@ -75,6 +78,38 @@ for node in article.select('div[class*="codeBlockTitle"]'):
     caption.append(strong)
     node.replace_with(caption)
 
+# Collapsible language tabs ("bash / zsh", "PHP", ...): keep the summary as a
+# bold caption, then let the content stand on its own.
+for node in article.find_all("details"):
+    summary = node.find("summary")
+    caption = BeautifulSoup("", "html.parser").new_tag("p")
+    strong = BeautifulSoup("", "html.parser").new_tag("strong")
+    strong.string = summary.get_text(strip=True) if summary else ""
+    caption.append(strong)
+    if summary:
+        summary.replace_with(caption)
+    for wrapper in node.find_all("div", recursive=False):
+        for inner in wrapper.select('div[class*="collapsibleContent"]'):
+            inner.unwrap()
+        wrapper.unwrap()
+    node.unwrap()
+
+# Admonitions ("DEPRECATED!") become a blockquote led by their heading; the
+# inline SVG icon would otherwise survive as a base64 data URI.
+for node in article.select('div[class*="theme-admonition"]'):
+    heading = node.select_one('div[class*="admonitionHeading"]')
+    content = node.select_one('div[class*="admonitionContent"]')
+    quote = BeautifulSoup("", "html.parser").new_tag("blockquote")
+    lead = BeautifulSoup("", "html.parser").new_tag("p")
+    strong = BeautifulSoup("", "html.parser").new_tag("strong")
+    strong.string = heading.get_text(strip=True) if heading else ""
+    lead.append(strong)
+    quote.append(lead)
+    if content:
+        for child in list(content.children):
+            quote.append(child.extract())
+    node.replace_with(quote)
+
 # Unwrap the presentational scaffolding around <pre>, innermost first.
 for selector in (
     'div[class*="codeBlockContent"]',
@@ -108,8 +143,8 @@ check() { # name actual expected
   else printf '  FAIL %-22s got %s want %s\n' "$1" "$2" "$3"; status=1; fi
 }
 # Fields: name, table headers, code fences, diagram slots. The fence counts are
-# 27/21 converted from the source pages + 2 mermaid diagram transcriptions each.
-for spec in "h2h 14 29 4" "fpf-v3 11 23 3"; do
+# 60/56 converted from the source pages + 2 mermaid diagram transcriptions each.
+for spec in "h2h 18 62 4" "fpf-v3 15 58 3"; do
   set -- $spec
   f="$1.md"
   echo "$f"

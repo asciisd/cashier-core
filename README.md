@@ -88,7 +88,8 @@ syncs use the exact account that took the charge (`transactions.connection`).
         'base_url' => env('APS_BASE_URL'),
         'merchant_guid' => env('APS_MERCHANT_GUID'),
         'app_token' => env('APS_APP_TOKEN'),
-        'app_secret' => env('APS_APP_SECRET'),
+        'private_key' => env('APS_PRIVATE_KEY'),      // ES256 key that signs requests
+        'app_secret' => env('APS_APP_SECRET'),        // deprecated; pre-signing accounts only
         'callback_secret' => env('APS_CALLBACK_SECRET'),   // signs callbacks; not the app secret
         'deposit_method' => env('APS_DEPOSIT_METHOD'),     // charge() throws without it
         // Optional: default to the `payment.success` / `webhooks.aps` routes.
@@ -102,7 +103,7 @@ syncs use the exact account that took the charge (`transactions.connection`).
         'base_url' => env('APS_APPLEPAY_BASE_URL'),
         'merchant_guid' => env('APS_APPLEPAY_MERCHANT_GUID'),
         'app_token' => env('APS_APPLEPAY_APP_TOKEN'),
-        'app_secret' => env('APS_APPLEPAY_APP_SECRET'),
+        'private_key' => env('APS_APPLEPAY_PRIVATE_KEY'),
         'callback_secret' => env('APS_APPLEPAY_CALLBACK_SECRET'),
         'deposit_method' => env('APS_APPLEPAY_DEPOSIT_METHOD'),
         // Opt in to the customer/billing block (default false).

@@ -16,12 +16,20 @@ class ApsClient
         private readonly string $baseUrl,
         private readonly string $merchantGuid,
         private readonly string $appToken,
-        private readonly string $appSecret,
+        /**
+         * Legacy `X-App-Secret` auth, deprecated by APS and not issued to new
+         * accounts. Unused for outbound auth once a signer is given.
+         */
+        private readonly ?string $appSecret,
         /**
          * APS issues a callback secret separately from the app secret. Falls back
          * to the app secret when unset, preserving the original behaviour.
          */
         private readonly ?string $callbackSecret = null,
+        /**
+         * Signs each request with the merchant's ES256 key — APS's current auth.
+         */
+        private readonly ?ApsRequestSigner $signer = null,
     ) {}
 
     /**
@@ -99,13 +107,19 @@ class ApsClient
      * Signed with the dedicated callback secret, NOT the app secret used for
      * outbound request auth. Where no callback secret is configured this falls
      * back to the app secret — which will reject every callback if APS actually
-     * signs with the callback secret, so configure `APS_CALLBACK_SECRET`.
+     * signs with the callback secret, so configure `APS_CALLBACK_SECRET`. With
+     * neither, every callback is rejected: an HMAC under an empty key is one
+     * anybody can compute.
      */
     public function verifySignature(string $rawBody, string $signature): bool
     {
         $secret = $this->callbackSecret !== null && $this->callbackSecret !== ''
             ? $this->callbackSecret
-            : $this->appSecret;
+            : (string) $this->appSecret;
+
+        if ($secret === '') {
+            return false;
+        }
 
         return hash_equals(hash_hmac('sha256', $rawBody, $secret), $signature);
     }
@@ -125,6 +139,10 @@ class ApsClient
 
     private function withAuth(PendingRequest $request): PendingRequest
     {
+        if ($this->signer !== null) {
+            return $request->withRequestMiddleware($this->signer)->acceptJson();
+        }
+
         return $request->withHeaders([
             'X-App-Token' => $this->appToken,
             'X-App-Secret' => $this->appSecret,
