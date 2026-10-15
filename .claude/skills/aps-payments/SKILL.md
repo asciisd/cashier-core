@@ -14,7 +14,7 @@ upstream changes show up as diffs.
 Read the one you need; they are large.
 
 - `references/quirks.md` — **start here.** Where the live API departs from its
-  own docs, and where the docs are silent. Twelve entries, each citing the code
+  own docs, and where the docs are silent. Fourteen entries, each citing the code
   in this package that handles it.
 - `references/h2h.md` — Host-to-Host guide. The `/api/v3` surface this package
   actually uses: `/info`, `POST /transactions`, status lookup, refunds, balance,
@@ -48,11 +48,13 @@ Five things that have already cost time:
 ## Adding another APS account
 
 **No driver code is involved.** APS issues a separate account per product — own
-merchant guid, app key, app secret and callback secret — and `ApsProvider` is
+merchant guid, app token, signing key and callback secret — and `ApsProvider` is
 built to serve exactly one of them per instance. A new account is a new entry in
 `cashier-core.connections` on the same `aps` driver, and nothing else:
 
-1. Get the account's credentials from APS.
+1. Generate an ES256 key pair, upload the public key in the merchant
+   dashboard (Settings → API Keys), and take the APP-TOKEN it issues. New
+   accounts get no app secret; set `private_key` (quirks §14).
 2. Read its payment method guid from `GET /api/v3/{merchantGuid}/info` on that
    account. `ApsClient::info()` implements the call, though nothing in the
    package invokes it yet.
@@ -61,7 +63,8 @@ built to serve exactly one of them per instance. A new account is a new entry in
    `webhooks.aps` route and `ApsWebhookController` identifies the sender by
    whose callback secret verifies the signature.
 4. Run `cashier:check`. It resolves every connection, and `ApsProvider`'s
-   constructor throws without a merchant guid, app token or app secret — so a
+   constructor throws without a merchant guid, app token, or a private key
+   (legacy accounts: app secret) — so a
    half-filled account fails there rather than at the first charge.
 
 `checkout_host_map` is only for the card gateway's JSON API host; unlisted hosts
@@ -71,6 +74,7 @@ actually arrives on a mapped host.
 ## The code
 
 - `src/Drivers/Aps/ApsClient.php` — HTTP surface, auth headers, signature check
+- `src/Drivers/Aps/ApsRequestSigner.php` — ES256 request signing (`private_key`)
 - `src/Drivers/Aps/ApsProvider.php` — charge, refund, retrieve, per-account config
 - `src/Drivers/Aps/ApsAdapter.php` — response/callback → cashier-core objects,
   status mapping

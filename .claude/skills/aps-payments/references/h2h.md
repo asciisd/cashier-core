@@ -41,23 +41,487 @@ In this guide, the terms remit and payout are used interchangeably to refer to t
 
 ## Integration Credentials
 
-During the onboarding process, you will receive a set of credentials to access the APS API for both staging and production environments. APS API uses token-based authentication.
+During the onboarding process, you should setup credentials to access the APS API for both staging and production environments. APS API uses ES-256 public key and a digital signature based on the URL, HTTP method, request payload and timestamp.
 
-**Required Authentication Headers**
+------------------------------------------------------------------------
 
-Every API request must include the following headers:
+### Setting up signed requests
 
-- App Token – Passed in the `X-App-Token` header.
-- App Secret – Passed in the `X-App-Secret` header.
+This is a step-by-step walkthrough. You don't need any special background in cryptography to follow it — just copy the commands and code as shown.
 
-Requests missing these credentials will be rejected.
+#### Step 1 — Generate your key pair
 
-**Other API Credentials**
+You'll create two files on your own machine: a **private key** (which you keep secret, forever, and never send to us) and a **public key** (which you upload to us — it's not secret).
+
+Pick the tab that matches what you have available:
+
+**bash / zsh (macOS, Linux)**
+
+If you have `openssl` installed (it comes pre-installed on macOS and virtually every Linux distribution), run:
+
+``` bash
+openssl ecparam -name prime256v1 -genkey -noout -out private.pem
+openssl ec -in private.pem -pubout -out public.pem
+```
+
+These two commands work identically whether your shell is `bash` or `zsh` (macOS's default shell since Catalina) — no changes needed either way.
+
+**PowerShell (Windows)**
+
+**If you have `openssl` available** (e.g. installed via [Git for Windows](https://git-scm.com/downloads), which bundles it), the exact same two commands work in PowerShell as-is:
+
+``` powershell
+openssl ecparam -name prime256v1 -genkey -noout -out private.pem
+openssl ec -in private.pem -pubout -out public.pem
+```
+
+**If you don't have `openssl` and don't want to install it**, PowerShell 7+ (with .NET 5 or later) can generate the same kind of key pair on its own:
+
+``` powershell
+$ecdsa = [System.Security.Cryptography.ECDsa]::Create([System.Security.Cryptography.ECCurve+NamedCurves]::nistP256)
+
+$privatePem = $ecdsa.ExportECPrivateKeyPem()
+$publicPem  = $ecdsa.ExportSubjectPublicKeyInfoPem()
+
+Set-Content -Path "private.pem" -Value $privatePem -NoNewline
+Set-Content -Path "public.pem"  -Value $publicPem  -NoNewline
+```
+
+(`nistP256` is the same curve as `prime256v1` / `secp256r1` — just Microsoft's naming for it.)
+
+Either way, you end up with two files:
+
+- `private.pem` — starts with `-----BEGIN EC PRIVATE KEY-----`. **Keep this file safe.** Treat it like a password — don't email it, don't commit it to a public repository, don't send it to our support team. Only your server needs it.
+- `public.pem` — starts with `-----BEGIN PUBLIC KEY-----`. This one is safe to share — you'll upload it to us in the next step.
+
+> **What is `prime256v1`?** It's the name of a specific, widely-supported elliptic curve (also called P-256 or secp256r1). This is the curve our system expects — using a different one won't work.
+
+#### Step 2 — Add your public key to your merchant dashboard
+
+Sign in to your merchant dashboard with an account that has the **Admin** role, then add your public key under **Settings → API Keys**.
+
+📖 [Detailed walkthrough with screenshots →](/developers/docs/guides/api-keys)
+
+Once your key is added, the dashboard will show you a matching **APP-TOKEN** — this is your account identifier, and you'll send it with every request (in the `X-App-Token` header) so we know which public key to check your signature against.
+
+> **Note:** each public key you add gets its own unique APP-TOKEN. If you add a second key later (for example, for a different environment or a key rotation), it will get a different APP-TOKEN — keep the right private key paired with the right APP-TOKEN in your code.
+
+#### Step 3 — Build the string you're going to sign
+
+Before signing anything, you first build a single string by joining four pieces of information together, **in this exact order, with nothing in between them** (no spaces, no separators):
+
+``` text
+SIGNED_DATA = TIMESTAMP + HTTP_METHOD + URL + REQUEST_BODY
+```
+
+- **TIMESTAMP** — the current time, in RFC-3339 format (e.g. `2026-09-26T10:00:00Z`). You'll send this exact same string in the `X-Sign-Timestamp` header.
+- **HTTP_METHOD** — the HTTP method of your request, in **UPPERCASE** (`GET`, `POST`, etc.)
+- **URL** — the *full* request URL: scheme, domain, path, and query string all together (e.g. `https://fpf-api.proc-gw.com/api/v3/61c21492-fd83-4180-adf6-8b0f4e0423bc/transactions`). See **"URL rules"** right below — this is the piece people most often get wrong.
+- **REQUEST_BODY** — the exact raw bytes of your request body, **byte-for-byte identical to what you actually send.** If your request has no body (like a GET request), use an empty string here — don't put anything in its place. If it does have a body, sign the exact bytes your HTTP client puts on the wire — don't re-serialize, re-indent, or "pretty-print" the JSON after you've computed the signature, or the bytes won't match what the server receives and verification will fail.
+
+**Example.** Say you're creating a transaction with this request:
+
+``` bash
+curl --location 'https://fpf-api.proc-gw.com/api/v3/61c21492-fd83-4180-adf6-8b0f4e0423bc/transactions' \
+--header 'Content-Type: application/json' \
+--header 'X-App-Token: {APP_TOKEN}' \
+--header 'X-Sign-Timestamp: {TIMESTAMP}' \
+--header 'X-Signature: {SIGNATURE}' \
+--data-raw '{"amount":100.2,"fields":{"transaction":{"deposit_method":"06d34870-a9d3-4baa-afce-995c1f385d1d:81180240-65f1-4ed0-9f1f-be1e0b4fa985"}}}'
+```
+
+With:
+
+- Timestamp: `2026-09-26T10:00:00Z`
+- Method: `POST`
+- URL: `https://fpf-api.proc-gw.com/api/v3/61c21492-fd83-4180-adf6-8b0f4e0423bc/transactions`
+- Body (exactly as sent, no extra whitespace): `{"amount":100.2,"fields":{"transaction":{"deposit_method":"06d34870-a9d3-4baa-afce-995c1f385d1d:81180240-65f1-4ed0-9f1f-be1e0b4fa985"}}}`
+
+Then the string you sign is exactly:
+
+``` text
+2026-09-26T10:00:00ZPOSThttps://fpf-api.proc-gw.com/api/v3/61c21492-fd83-4180-adf6-8b0f4e0423bc/transactions{"amount":100.2,"fields":{"transaction":{"deposit_method":"06d34870-a9d3-4baa-afce-995c1f385d1d:81180240-65f1-4ed0-9f1f-be1e0b4fa985"}}}
+```
+
+(That's the timestamp, immediately followed by `POST`, immediately followed by the URL, immediately followed by the JSON body — all glued together with nothing in between.)
+
+##### URL rules
+
+Our server rebuilds the URL from your request and compares it to what you signed, **character by character**. So the URL in your signed string must follow these rules:
+
+1.  **Always start with `https://`**, even if you're testing through a proxy or tool that shows something else.
+2.  **Use the host you're calling, in lowercase** (e.g. `fpf-api.proc-gw.com`, not `FPF-API.PROC-GW.COM`).
+3.  **Path must be exactly what you send on the wire.** Don't re-encode it, don't add or remove a trailing slash after you've signed.
+4.  **Query parameters must be sorted alphabetically and lowercase** — see "Sort and lower-case your query parameters" right below. This is required, not optional.
+5.  **Don't re-encode already-encoded characters**, and keep the same letter case in percent-escapes (e.g. `%3A`) that your HTTP client actually sends. Re-encoding a value that contains a colon, slash, or other special character — or changing `%3A` to `%3a` — produces a different byte string than what goes out on the wire, and the signature won't match.
+6.  **Anything after `#` is never sent to the server**, so leave it out.
+7.  **Pass each parameter only once.** Names that differ only in case (`Id` and `id`) count as the same name. To pass a list of values, use a single parameter in the format documented for it, e.g. `payment_methods=card,crypto`. Repeated keys (`ids=1&ids=2`, `ids[]=1&ids[]=2`) are not supported.
+8.  **Pass every parameter as `name=value`**, even when the value is empty: `flag=`. A parameter without `=` is not supported.
+9.  **Separate parameters with `&` only.** Empty pairs are not allowed: no `&&`, and no `&` at the start or end.
+10. **If there are no parameters, don't add `?` to the URL.**
+
+Example with a query string — fetching the payment methods available for a deposit method pair (`GET`, no body):
+
+``` bash
+curl --location 'https://fpf-api.proc-gw.com/api/v3/61c21492-fd83-4180-adf6-8b0f4e0423bc/info?payment_methods=1d21c7e3-de57-47e2-9ccc-31c5e16dea04%3A492e48b4-7d5a-4a0c-af2f-0699f75d996b' \
+--header 'X-App-Token: {APP_TOKEN}' \
+--header 'X-Sign-Timestamp: {TIMESTAMP}' \
+--header 'X-Signature: {SIGNATURE}' \
+--header 'Content-Type: application/json'
+```
+
+The string you'd sign for this request is:
+
+``` text
+2026-09-26T10:00:00ZGEThttps://fpf-api.proc-gw.com/api/v3/61c21492-fd83-4180-adf6-8b0f4e0423bc/info?payment_methods=1d21c7e3-de57-47e2-9ccc-31c5e16dea04%3A492e48b4-7d5a-4a0c-af2f-0699f75d996b
+```
+
+(There's nothing at the end because a GET request has no body. Note the `%3A` in the query string — that's a URL-encoded colon, specified payment method setting ID in the `payment_methods` value. It's kept exactly as-is, uppercase hex and all — see rule 5 above.)
+
+> **This particular example doesn't actually change under the sort/lower-case rule** — there's only one parameter (nothing to sort), and every letter in its value is already lowercase hex (the GUIDs). The only "uppercase-looking" part is the `%3A` escape, and that one is explicitly left alone per rule 5. If you only ever call endpoints with a single, already-lowercase parameter, you may never see this rule actually change anything — but implement it anyway, since other endpoints or future parameters may not be as tidy.
+
+##### Sort and lower-case your query parameters (required)
+
+If your request has a query string with **more than one parameter**, you must:
+
+1.  **Sort the parameters alphabetically by name.**
+2.  **Lower-case every parameter name.** Parameter **values are left exactly as sent** — don't lower-case them.
+
+Do this to the URL you actually send, not just to the string you sign — the two need to be identical, since our server checks your signature against the exact URL your request arrives with.
+
+**Example:**
+
+``` text
+Before: ?Foo=Bar&AAA=Test
+After:  ?aaa=Test&foo=Bar
+```
+
+(Notice `Test` and `Bar` keep their original capitalization — only the parameter names `aaa` and `foo` changed.)
+
+> **Note on percent-encoded characters** (like the `%3A` in the real example above): lower-casing applies to the parameter *name*, not to the hex digits inside a `%XX` escape sequence that might appear within it — don't turn `%3A` into `%3a`. In practice you don't need to handle this by hand: the normalization helpers below (and virtually every standard URL-encoding function, in any language) always emit percent-escapes with uppercase hex digits, so this falls out automatically as long as you encode your query string the normal way, once, and don't hand-edit it afterwards.
+
+**Why this is required:** some HTTP libraries — this shows up especially often in PHP — don't guarantee a consistent order (or even consistent casing) for query parameters when you build a request from an associative array. Two requests that look identical in your code can end up sent slightly differently "on the wire." Sorting and lower-casing removes that uncertainty completely: no matter what your library does internally, you always land on the same, single correct string.
+
+Here's how to do this normalization in a few common languages:
+
+**Python**
+
+``` python
+def normalize_query(raw_query: str) -> str:
+    pairs = []
+    for pair in raw_query.split("&"):
+        if pair:
+            key, _, value = pair.partition("=")
+            pairs.append((key, value))
+    # Only the parameter name is lower-cased; the value is left as-is.
+    normalized = sorted((key.lower(), value) for key, value in pairs)
+    return "&".join(f"{key}={value}" for key, value in normalized)
+```
+
+**Go**
+
+``` go
+// Requires Go 1.23+ (for the iterator-based maps.Keys).
+func NormalizeQuery(rawQuery string) string {
+    normalized := url.Values{}
+    for _, pair := range strings.Split(rawQuery, "&") {
+        if pair == "" {
+            continue
+        }
+        key, value, _ := strings.Cut(pair, "=")
+        lowerKey := strings.ToLower(key)
+        normalized.Add(lowerKey, value) // value left as-is
+    }
+
+    pairs := make([]string, 0, len(normalized))
+    for _, key := range slices.Sorted(maps.Keys(normalized)) {
+        for _, v := range normalized[key] {
+            pairs = append(pairs, key+"="+v)
+        }
+    }
+    return strings.Join(pairs, "&")
+}
+```
+
+**C#**
+
+``` csharp
+public static string NormalizeQuery(string rawQuery)
+{
+    var pairs = rawQuery.TrimStart('?')
+        .Split('&', StringSplitOptions.RemoveEmptyEntries)
+        .Select(p =>
+        {
+            var idx = p.IndexOf('=');
+            var key = idx >= 0 ? p[..idx] : p;
+            var value = idx >= 0 ? p[(idx + 1)..] : "";
+            return (Key: key.ToLowerInvariant(), Value: value); // value left as-is
+        })
+        .OrderBy(p => p.Key, StringComparer.Ordinal)
+        .ThenBy(p => p.Value, StringComparer.Ordinal);
+
+    return string.Join("&", pairs.Select(p => $"{p.Key}={p.Value}"));
+}
+```
+
+**PHP**
+
+This is the fix for the exact problem this rule exists for: `ksort()` after lower-casing gives you a deterministic order no matter how your original array was built.
+
+``` php
+function normalizeQuery(string $rawQuery): string
+{
+    $params = [];
+    foreach (explode('&', $rawQuery) as $pair) {
+        if ($pair === '') {
+            continue;
+        }
+        [$key, $value] = array_pad(explode('=', $pair, 2), 2, '');
+        $params[$key] = $value;
+    }
+
+    $normalized = [];
+    foreach ($params as $key => $value) {
+        // Only the key is lower-cased; the value is left as-is.
+        $normalized[strtolower((string) $key)] = $value;
+    }
+
+    ksort($normalized, SORT_STRING);
+
+    $pairs = [];
+    foreach ($normalized as $key => $value) {
+        $pairs[] = $key . '=' . $value;
+    }
+
+    return implode('&', $pairs);
+}
+```
+
+#### Step 4 — Sign it
+
+Now sign that string with your **private key**, using SHA-256 as the hash and ES256 (ECDSA over curve P-256) as the signature algorithm. Encode the result in Base64 — that final value is what goes in the `X-Signature` header.
+
+Here's how to do that in a few common languages:
+
+**Python**
+
+Requires the `cryptography` package: `pip install cryptography`
+
+``` python
+import base64
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+
+def sign(sign_timestamp: str, http_method: str, url: str, req_body: bytes, private_key_pem: bytes) -> str:
+    private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+    signed_data = sign_timestamp.encode() + http_method.encode() + url.encode() + req_body
+    signature = private_key.sign(signed_data, ec.ECDSA(hashes.SHA256()))
+    return base64.b64encode(signature).decode()
+```
+
+**Go**
+
+``` go
+func Sign(signTimestamp, httpMethod, url string, reqBody, privateKeyPEM []byte) (string, error) {
+    block, _ := pem.Decode(privateKeyPEM)
+    privateKey, err := x509.ParseECPrivateKey(block.Bytes)
+    if err != nil {
+        return "", err
+    }
+
+    signedData := signTimestamp + httpMethod + url + string(reqBody)
+    hashed := sha256.Sum256([]byte(signedData))
+
+    signature, err := ecdsa.SignASN1(rand.Reader, privateKey, hashed[:])
+    if err != nil {
+        return "", err
+    }
+    return base64.StdEncoding.EncodeToString(signature), nil
+}
+```
+
+**C#**
+
+Requires .NET 5.0 or later.
+
+``` csharp
+public static string Sign(string signTimestamp, string httpMethod, string url, byte[] reqBody, string privateKeyPem)
+{
+    using var ecdsa = ECDsa.Create();
+    ecdsa.ImportFromPem(privateKeyPem);
+
+    var prefix = Encoding.UTF8.GetBytes(signTimestamp + httpMethod + url);
+    var signedData = new byte[prefix.Length + reqBody.Length];
+    Buffer.BlockCopy(prefix, 0, signedData, 0, prefix.Length);
+    Buffer.BlockCopy(reqBody, 0, signedData, prefix.Length, reqBody.Length);
+
+    // Important: request DER format explicitly — .NET's default is a different format.
+    byte[] signature = ecdsa.SignData(signedData, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence);
+    return Convert.ToBase64String(signature);
+}
+```
+
+**PHP**
+
+Requires the `openssl` extension (included by default in most PHP installs).
+
+``` php
+function sign(string $signTimestamp, string $httpMethod, string $url, string $reqBody, string $privateKeyPem): string
+{
+    $privateKey = openssl_pkey_get_private($privateKeyPem);
+    $signedData = $signTimestamp . $httpMethod . $url . $reqBody;
+
+    $signature = '';
+    openssl_sign($signedData, $signature, $privateKey, OPENSSL_ALGO_SHA256);
+
+    return base64_encode($signature);
+}
+```
+
+> **A signature will look different every time, even for the same input — and that's normal.** ECDSA signatures include some randomness by design, so signing the exact same string twice with the exact same key will still produce two different (but both valid) signatures. Don't worry if your signature doesn't match an example byte-for-byte — what matters is that it *verifies* correctly (see the test vector below).
+
+#### Step 5 — Send the headers with your request
+
+Every signed request needs these three headers:
+
+| Header             | Value                                         |
+|--------------------|-----------------------------------------------|
+| `X-App-Token`      | Your APP-TOKEN, from Step 2                   |
+| `X-Sign-Timestamp` | The exact timestamp string you used in Step 3 |
+| `X-Signature`      | The Base64-encoded signature from Step 4      |
+
+That's it — no need to send anything else related to authentication. Don't send `X-App-Secret` for new integrations; it isn't used with signed requests.
+
+------------------------------------------------------------------------
+
+#### Test vector — check your implementation before going live
+
+Use this worked example to confirm your code produces a valid signature *before* you try it against our real API. This uses a throwaway test key pair — don't use it for anything real.
+
+**Private key** (for signing, in the test only):
+
+``` text
+-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIAAgroGhza8H+6iRgbrSENejPZyCx9jyyuN0MH48r++zoAoGCCqGSM49
+AwEHoUQDQgAEdN3uINmPVb1oVuQb3NdP51Qy9eggH8MOyK3DuLlONNRtnnJq+7AX
+h4wMLgJklRozEvknH/7Zt2M3qkEyEXvqlg==
+-----END EC PRIVATE KEY-----
+```
+
+**Matching public key** (use this to verify your own output):
+
+``` text
+-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEdN3uINmPVb1oVuQb3NdP51Qy9egg
+H8MOyK3DuLlONNRtnnJq+7AXh4wMLgJklRozEvknH/7Zt2M3qkEyEXvqlg==
+-----END PUBLIC KEY-----
+```
+
+**Inputs** (the same transaction-creation request from Step 3):
+
+- Timestamp: `2026-09-26T10:00:00Z`
+- Method: `POST`
+- URL: `https://fpf-api.proc-gw.com/api/v3/61c21492-fd83-4180-adf6-8b0f4e0423bc/transactions`
+- Body: `{"amount":100.2,"fields":{"transaction":{"deposit_method":"06d34870-a9d3-4baa-afce-995c1f385d1d:81180240-65f1-4ed0-9f1f-be1e0b4fa985"}}}`
+
+**A valid signature for this exact input** (yours will be different — see the note above — but it should verify against the public key just as well):
+
+``` text
+MEYCIQDZZ6R/7gvoXqzKC3Nf0K5M0XC4PQ1y+Q2MJCRx8Rr0ggIhAIImtw8QWwuUE/bZJAGe+mAg6D3brWrOPfnLNSETQpVj
+```
+
+**How to check your own signature is valid**, using `openssl` on the command line:
+
+``` bash
+# 1. Save the exact concatenated string to a file (no trailing newline)
+printf '%s' '2026-09-26T10:00:00ZPOSThttps://fpf-api.proc-gw.com/api/v3/61c21492-fd83-4180-adf6-8b0f4e0423bc/transactions{"amount":100.2,"fields":{"transaction":{"deposit_method":"06d34870-a9d3-4baa-afce-995c1f385d1d:81180240-65f1-4ed0-9f1f-be1e0b4fa985"}}}' > signed_data.txt
+
+# 2. Save your Base64 signature to a file and decode it
+echo "YOUR_SIGNATURE_HERE" | base64 -d > signature.der
+
+# 3. Verify it against the public key above (save it as test_public.pem)
+openssl dgst -sha256 -verify test_public.pem -signature signature.der signed_data.txt
+# Should print: Verified OK
+```
+
+If you get `Verified OK`, your signing code is correct and you're ready to switch your APP-TOKEN and public key over to your real merchant account.
+
+------------------------------------------------------------------------
+
+### List of authorization errors
+
+If something's wrong with your request's authentication, you'll get back **HTTP `401 Unauthorized`** with a JSON body containing a `message` and a `trace_id` (useful if you need to contact support about a specific request). Here's what each one means:
+
+| `message` | What it means | What to do |
+|----|----|----|
+| `signature expired` | Your `X-Sign-Timestamp` is more than 5 minutes away from our server time. | Generate a fresh timestamp right before signing and sending — don't sign ahead of time and reuse it later, and make sure your server clock is in sync (NTP). |
+| `invalid signature` | The signature doesn't match the request. Usually means something in the request changed *after* you computed the signature — most often the body got re-serialized, re-indented, or otherwise altered between signing and sending. | Double-check that the exact bytes you signed (timestamp + method + URL + body) are the exact bytes you send — see the note on byte-exact bodies in Step 3. |
+| `public key not found` | The `X-App-Token` you sent doesn't match any active public key — it may be mistyped, or the key may have been deleted/rotated in the dashboard. | Confirm the APP-TOKEN in your request matches a key that's currently listed under Settings → API Keys. |
+
+``` json
+{"message":"signature expired","trace_id":"1c4d01ee9acaae3f2871f6ca1b7b879a"}
+{"message":"invalid signature","trace_id":"3f3c4d62c278b01e90c00d7ed066e441"}
+{"message":"public key not found","trace_id":"79092cc19cae32e20770de08e9f3a02b"}
+```
+
+------------------------------------------------------------------------
+
+### Authentication FAQs
+
+**Q: My signature doesn't match the example in the test vector byte-for-byte. Is something wrong?** Not necessarily — see the note in Step 4. ECDSA signatures aren't deterministic, so the same input signed twice (even with the same key) produces different valid signatures. Use the `openssl verify` check instead of comparing bytes directly.
+
+**Q: What happens if my timestamp is too old or too far in the future?** Requests are rejected if the timestamp differs from our server time by more than 5 minutes, to protect against replay attacks. Keep your server clock in sync (e.g. via NTP) and generate a fresh timestamp for every request.
+
+**Q: Can I use a different elliptic curve, like P-384 or P-521?** No — we only support P-256 (also called `prime256v1` or `secp256r1`) for now.
+
+**Q: What format does the public key need to be in?** Standard PEM, PKIX/SPKI format — the kind produced by `openssl ec -in private.pem -pubout -out public.pem`. It should start with `-----BEGIN PUBLIC KEY-----`.
+
+**Q: Can I have more than one key pair?** Yes. Each key you add gets its own APP-TOKEN. This is useful for separating environments (staging vs. production) or for rotating keys without downtime — add a new key, switch your integration over, then delete the old one.
+
+**Q: My signature is valid locally but the API rejects it. What should I check first?** First, check which error message you got — see "List of authorization errors" above, each one points at a different cause. If it's `invalid signature`, it's almost always the URL: check that (1) it starts with `https://`, (2) the host is lowercase, (3) the query parameters are in the same order and encoding you actually send, and (4) there's no trailing-slash difference between what you signed and what you sent. Print the exact string you signed and compare it with the request line your HTTP client really sends.
+
+**Q: I'm testing through a proxy or a local tunnel, and the URL shows `http://` or a different host. Which one do I sign?** Sign the `https://` URL with the public host you're calling (`fpf-api.proc-gw.com`), as described in "URL rules".
+
+**Q: Does the order of the query parameters matter?** Yes — and it's not "whatever order you happen to send it in" anymore. Query parameters **must** be sorted alphabetically by parameter name, in both the signed string and the actual request. See "Sort and lower-case your query parameters" above.
+
+**Q: Why do I need to lower-case my query parameter names? Won't that change my data?** Only the parameter *name* is lower-cased — the value is always left exactly as you send it, so this never changes your data. It's required so that every client — regardless of language or HTTP library — always produces the exact same string for the exact same logical request, since some HTTP libraries don't guarantee consistent casing for parameter names when building a request from an associative structure.
+
+------------------------------------------------------------------------
+
+### Old authentication method \[DEPRECATED\]
+
+> **DEPRECATED!**
+>
+> If you integrated with us before signed requests were available, your existing integration using `X-App-Token` + `X-App-Secret` headers will continue to work for now. There's no fixed shutoff date yet, but we recommend migrating to [signed requests](#setting-up-signed-requests) soon, since it's the more secure option going forward and the one we'll be supporting long-term. This legacy method is **not available for new integrations** — new merchants should set up signed requests from the start.
+>
+> For reference, here's the same transaction-creation request from Step 3, using the old method — no `X-Signature` or `X-Sign-Timestamp`, just your token and secret:
+>
+> **Create transaction**
+>
+> ``` bash
+> curl https://fpf-api.proc-gw.com/api/v3/merchantGUID/transactions \
+>         --header 'Content-Type: application/json' 
+>         --header 'X-App-Token: {APP_TOKEN}' 
+>         --header 'X-App-Secret: {APP_SECRET}' 
+>         --data-raw '{
+>             "amount": 100.2,
+>             "fields": {
+>                 "transaction": {
+>                     "deposit_method": "06d34870-a9d3-4baa-afce-995c1f385d1d:81180240-65f1-4ed0-9f1f-be1e0b4fa985"
+>                 }
+>             }
+>         }
+>         
+> ```
+
+------------------------------------------------------------------------
+
+### Other API Credentials
 
 - Merchant GUID – A unique identifier for the merchant, used in the API endpoint path as `merchantGUID`.
 - Callback Secret Key – Used to validate callback requests from APS. Status callbacks include a request signature for verification.
 
-**Environment-Specific URLs**
+### Environment-Specific URLs
 
 - Staging Environment: <https://fpf-api.armenotech.net>
 - Production Environment: <https://fpf-api.proc-gw.com>
@@ -70,45 +534,46 @@ Each environment has its own credentials, so ensure you use the correct set when
 
 1.  Agreement on Payment Methods, Countries, and Limits
 
-You (the Merchant) and APS agree on the supported payment methods, geographic regions, and transfer limits. For information regarding limits and geographical coverage, please contact your account manager.
+    You (the Merchant) and APS agree on the supported payment methods, geographic regions, and transfer limits. For information regarding limits and geographical coverage, please contact your account manager.
 
-1.  Receiving Credentials for the Staging Environment
+2.  Generating and Registering Your Key Pair for the Staging Environment
 
-We will provide you with credentials for the Staging Environment via a one-time link sent to your email.
+    Generate an ES256 (P-256) key pair on your side — your private key never leaves your systems and is never shared with APS. Sign in to the Merchant Portal with an account that has the Admin role and upload your public key under Settings → API Keys for the Staging Environment. You'll receive a unique APP-TOKEN tied to that key — use it together with your private key to sign your requests. See the Integration Credentials guide for a step-by-step walkthrough, including how to generate the key pair and sign requests.
 
-1.  Verifying Credentials
+    Before making any API requests, confirm that the APP-TOKEN you're using matches the key pair you generated, and that your signing code produces a valid signature — the Integration Credentials guide includes a test vector you can check your implementation against.
 
-Before making any API requests, ensure that the tokens associated with your merchantGUID match the credentials provided. Please verify these credentials with the APS team before proceeding.
+3.  Test on Staging Environment
 
-1.  Familiarizing Yourself with the API and Testing
+    Review the integration documentation and proceed with testing:
 
-Review this document and proceed with testing:
+    - Start by [retrieving all available payment methods](https://merchant-fe-staging.armenotech.net/developers/docs/h2h/integration#get-info-by-payment-methods). Use the relevant API request to receive an array of payment methods available to you. The response will include details such as currency, fees, and limits for each method.
+    - Make 1 or 2 test transactions and test a refund process. Refer to the [How to make a Refund](https://merchant-fe-staging.armenotech.net/developers/docs/h2h/integration#how-to-make-a-refund) section for guidance.
 
-- Start by [retrieving all available payment methods](#get-info-by-payment-methods). Use the relevant API request to receive an array of payment methods available to you. The response will include details such as currency, fees, and limits for each method.
-- Make 1 or 2 test transactions and test a refund process. Refer to the [How to make a Refund](#how-to-make-a-refund) section for guidance.
+4.  Generating and Registering Your Key Pair for the Production Environment
 
-5.  Transition to the Production Environment
+    After successfully completing your tests on the Staging Environment and signing all necessary documents, generate a separate ES256 key pair for Production and upload the public key in the Merchant Portal to receive your Production APP-TOKEN.
 
-After successfully completing the tests and signing all necessary documents, you can finalize the settings. At this point, we will send you credentials for the Production Environment.
+    Note: your Production key pair and APP-TOKEN are separate from Staging — you cannot reuse your Staging key pair in Production.
 
-*Note:* The credentials for the Production Environment differ from those for the Staging Environment.
+5.  Test on Prod Environment
 
-1.  Using the Production Environment
+    API requests work the same way in the Production Environment as they do in Staging. Use your Production key pair and APP-TOKEN to repeat your integration checks — including a test transaction and a refund — before relying on the integration for live traffic.
 
-The API requests will function the same way in the Production Environment. You will receive a separate document containing the necessary credentials, links, and guides for production use.
+6.  Go-Live Confirmation
 
-1.  Access to the Merchant Portal
+    After we confirm that your integration is complete and working correctly, you can start sending live traffic through the Production Environment.
 
-- You will also gain access to the Merchant Portal, where you can log in using the email address where you received your credentials.
-- For detailed instructions on how to use the Merchant Portal, please refer to the Merchant Portal Guide.
+------------------------------------------------------------------------
+
+Additional information: once onboarded, you'll also gain access to the Merchant Portal, where you can log in using the email address associated with your account. For detailed instructions on how to use the Merchant Portal, please refer to the Merchant Portal Guide.
 
 ### Integration Diagram
 
-<!-- source: steps.png -->
+<!-- source: new_integration_steps.png -->
 1. Agreements about payment methods, countries, and the limits of transfers.
-2. Credentials for the Stage environment, delivered as a one-time link by email.
+2. Generate a key pair and register the public key for the Stage environment.
 3. Test on the staging environment.
-4. Credentials for the Prod environment, delivered as a one-time link by email.
+4. Generate a key pair and register the public key for the Prod environment.
 5. Test on the Prod environment.
 6. After APS confirms the integration is done, traffic can start.
 
@@ -194,6 +659,18 @@ The happy-path flow is as follows:
 The `GET /info` request retrieves information about available payment methods and their associated payment details. By making this request, you can obtain all the necessary information regarding the connected payment methods.
 
 Example request:
+
+**Get payment methods**
+
+``` bash
+curl https://fpf-api.proc-gw.com/api/v3/merchantGUID/info \
+        --header 'X-App-Token: {APP_TOKEN}' 
+        --header 'X-Sign-Timestamp: {TIMESTAMP}' 
+        --header 'X-Signature: {SIGNATURE}' 
+        
+```
+
+**Old authentication method \[DEPRECATED\]**
 
 **Get payment methods**
 
@@ -298,6 +775,27 @@ Example request with the required fields:
 ``` bash
 curl POST https://fpf-api.proc-gw.com/api/v3/merchantGUID/transactions \
 --header 'Content-Type: application/json'
+--header 'X-App-Token: {APP_TOKEN}' 
+--header 'X-Sign-Timestamp: {TIMESTAMP}' 
+--header 'X-Signature: {SIGNATURE}' 
+--data-raw '{
+      "amount": 100.2,
+      "fields": {
+          "transaction": {
+              "deposit_method": "06d34870-a9d3-4baa-afce-995c1f385d1d:81180240-65f1-4ed0-9f1f-be1e0b4fa985"
+          }
+      }
+  }'
+        
+```
+
+**Old authentication method \[DEPRECATED\]**
+
+**Initiate transaction**
+
+``` bash
+curl POST https://fpf-api.proc-gw.com/api/v3/merchantGUID/transactions \
+--header 'Content-Type: application/json'
 --header 'X-App-Token: {APP_KEY}'
 --header 'X-App-Secret: {APP_SECRET}'
 --data-raw '{
@@ -314,6 +812,43 @@ curl POST https://fpf-api.proc-gw.com/api/v3/merchantGUID/transactions \
 You can get the list of optional fields making [Get Available Payment Methods](#get-info-by-payment-methods) request.
 
 Example request with the optional fields:
+
+**Initiate transaction with optional fields**
+
+``` bash
+curl POST https://fpf-api.proc-gw.com/api/v3/merchantGUID/transactions \
+--header 'Content-Type: application/json'
+--header 'X-App-Token: {APP_TOKEN}' 
+--header 'X-Sign-Timestamp: {TIMESTAMP}' 
+--header 'X-Signature: {SIGNATURE}' 
+--data-raw '{
+      "amount": 100.2,
+      "fields": {
+          "transaction": {
+              "deposit_method": "06d34870-a9d3-4baa-afce-995c1f385d1d:81180240-65f1-4ed0-9f1f-be1e0b4fa985",
+              "deposit": {
+                      "redirect_url": "https://www.google.com",
+                      "status_callback_url": "https://fast-payment-flow-merchant.armenotech.dev/94b9f3ed-ee84-4789-8c4b-41ee8c61ad41/transactions",
+                      "external_id": "external transaction identifier, string",
+                      "payer_id": "external payer identifier, string",
+                        "customer_ip_address": "93.109.244.86",
+                      "from_country": "GB",
+                      "from_last_name": "Smith",
+                      "from_first_name": "John",
+                      "billing_street": "Test street",
+                      "billing_town": "London",
+                      "billing_post_code": "0839",
+                      "from_email": "customer@gmail.com",
+                      "referer_domain": "www.externalwebsite.com",
+                      "locale_lang": "es"
+              }
+          }
+      }
+  }'
+        
+```
+
+**Old authentication method \[DEPRECATED\]**
 
 **Initiate transaction with optional fields**
 
@@ -543,6 +1078,38 @@ Example of bank card remit transaction request:
 curl POST https://fpf-api.proc-gw.com/api/v3/merchantGUID/transactions \
 --header 'Content-Type: application/json'
 --header 'X-App-Token: {APP_KEY}'
+--header 'X-Sign-Timestamp: {TIMESTAMP}' 
+--header 'X-Signature: {SIGNATURE}' 
+--data-raw '{
+      "amount": 100.2,
+      "fields": {
+          "transaction": {
+              "remit_method": "06d34870-a9d3-4baa-afce-995c1f385d1d:81180240-65f1-4ed0-9f1f-be1e0b4fa985",
+              "remit": {
+   "external_id": "merchant_external_id_string",
+   "payer_id": "merchant_payer_id_string",
+   "customer_ip_address": "93.109.244.86",
+   "referer_domain": "www.externalwebsite.com",
+   "redirect_url": "https://www.yourswebsite.com/redirect",
+   "status_callback_url": "https://www.yourswebsite.com/callback",
+   "from_country": "USA",
+   "to_bank_card": "2222444422224444",
+   "to_bank_card_exp": "12/31"
+              }
+          }
+      }
+  }'
+        
+```
+
+**Old authentication method \[DEPRECATED\]**
+
+**Initiate transaction for remit**
+
+``` bash
+curl POST https://fpf-api.proc-gw.com/api/v3/merchantGUID/transactions \
+--header 'Content-Type: application/json'
+--header 'X-App-Token: {APP_KEY}'
 --header 'X-App-Secret: {APP_SECRET}'
 --data-raw '{
       "amount": 100.2,
@@ -574,7 +1141,7 @@ When making a request to create a transaction, it is crucial to ensure that the 
 | `remit_method` | The payment method identifier (GUID). You can obtain this by making a request for [Get Available Payment Methods](#get-info-by-payment-methods). |
 | `remit` | An object containing additional fields related to the transaction, such as payment details. |
 | `status_callback_url` | The URL where callback requests will be sent when the transaction status changes. |
-| `redirect_url` | The URL to which the customer will be redirected after the deposit is completed. This applies only to deposit transactions, and note that some payment methods may not support redirection.. |
+| `redirect_url` | The URL to which the customer will be redirected after the deposit is completed. This applies only to deposit transactions, and note that some payment methods may not support redirection. |
 | `external_id` | The merchant's transaction ID, which can be up to 96 characters long. This ID is not required to be unique across all of the merchant's transactions. |
 | `payer_id` | The payer's identifier in the merchant's internal system, up to 96 characters long. This ID is not required to be unique across the merchant's transactions. |
 | `referer_domain` | The domain of the original URL from which the transaction request originated. Used to identify the website or application that directed the user to complete the payment. |
@@ -600,6 +1167,19 @@ Example of remit transaction response:
 You can request the transaction status via the API using the transaction ID.
 
 Example request:
+
+**Get Status Transaction**
+
+``` bash
+curl https://fpf-api.proc-gw.com/api/v3/merchantGUID/TRANSACTION_ID \
+        --header 'X-App-Token: APP_KEY'
+        --header 'X-Sign-Timestamp: {TIMESTAMP}' 
+        --header 'X-Signature: {SIGNATURE}' 
+        --header 'Content-Type: application/json'
+        
+```
+
+**Old authentication method \[DEPRECATED\]**
 
 **Get Status Transaction**
 
@@ -752,10 +1332,10 @@ func Verify(body []byte, secret, headerSig string) bool {
 
 ### Deposit Callback
 
-Example response:
+Request example:
 
 ``` text
-  "payload": {
+  {
     "amount_body": 500,
     "amount_in": 500,
     "amount_out": 475.5,
@@ -795,7 +1375,7 @@ Example response:
     "status": "refunded",
     "fiscal_status": "done",
     "transaction_id": "b829f009-afe0-45c2-9996-8941f80bcb0e"
-  },
+  }
 ```
 
 Request body contains the following elements:
@@ -857,7 +1437,7 @@ Request body contains the following elements:
 Request example:
 
 ``` text
-"payload": {
+{
     "amount_body": 100.2,
     "amount_in": 100.2,
     "amount_out": 94.68,
@@ -879,7 +1459,7 @@ Request example:
     "status": "done",
     "fiscal_status": "done",
     "transaction_id": "07f62464-fcf1-47b3-a804-3af29b884134"
-  },
+  }
 ```
 
 Request body contains the following elements:
@@ -926,6 +1506,23 @@ Depending on the payment method and issuer the refund process may take:
 - up to 8-10 weeks in rare cases.
 
 Request example:
+
+**How to make a refund**
+
+``` bash
+curl POST https://fpf-api.proc-gw.com/api/v3/merchantGUID/TRANSACTION_ID/refund \
+        --header 'X-App-Token: APP_KEY'
+        --header 'X-Sign-Timestamp: {TIMESTAMP}' 
+        --header 'X-Signature: {SIGNATURE}' 
+        --header 'Content-Type: application/json'
+        --data-raw '{
+                      "reason":"{DESCRIPTION}",
+                      "external_id": "{YOUR_REFUND_EXTERNAL_ID}"
+                    }
+        
+```
+
+**Old authentication method \[DEPRECATED\]**
 
 **How to make a refund**
 
@@ -988,31 +1585,97 @@ Example Response:
 You can make partial refunds of deposits. In order to initiate partial refund an field "amount" should be added to refund request. It is possible to make several partial refunds for one initial transaction.\
 Request example:
 
+**How to make a partial refund**
+
 ``` bash
-curl --location --request POST '{FPFBackendURL}/api/v3/{MerchantGUID}/{TRANSACTION_ID}/refund'   
---header 'X-App-Token: {APP_TOKEN}' \
---header 'X-App-Secret: {APP_SECRET}' \
---header 'Content-Type: application/json' \
---data-raw \
-'{  
-  "reason":"{DESCRIPTION}", 
-  "external_id": "{YOUR_REFUND_EXTERNAL_ID}", 
-  "amount": 100.00   
-}'
+curl POST https://fpf-api.proc-gw.com/api/v3/merchantGUID/TRANSACTION_ID/refund \
+        --header 'X-App-Token: APP_KEY'
+        --header 'X-Sign-Timestamp: {TIMESTAMP}' 
+        --header 'X-Signature: {SIGNATURE}' 
+        --header 'Content-Type: application/json'
+        --data-raw '{
+                      "reason":"{DESCRIPTION}",
+                      "external_id": "{YOUR_REFUND_EXTERNAL_ID}",
+                      "amount": 100.00 
+                    }
+        
 ```
 
-Response example:
+**Old authentication method \[DEPRECATED\]**
 
-1.  Status code 200, the body is empty.
-2.  Status code 400/500, example body:
+**How to make a partial refund**
 
 ``` bash
-"bad_request, refund is not supported for this transaction"
+curl POST https://fpf-api.proc-gw.com/api/v3/merchantGUID/TRANSACTION_ID/refund \
+        --header 'X-App-Token: APP_KEY'
+        --header 'X-App-Secret: APP_SECRET'
+        --header 'Content-Type: application/json'
+        --data-raw '{
+                      "reason":"{DESCRIPTION}",
+                      "external_id": "{YOUR_REFUND_EXTERNAL_ID}",
+                      "amount": 100.00 
+                    }
+        
+```
+
+Request body contains the following elements:
+
+| Field | Description | Required |
+|----|----|----|
+| `amount` | Amount of the partial refund. | yes |
+| `reason` | Reason of the refund. | no |
+| `external_id` | Your refund external ID. The `external_id` field must be unique. If a refund is registered with a duplicated `external_id`, an error will be returned. | no |
+
+Response body contains the following elements:
+
+| Field | Description | Required |
+|----|----|----|
+| `id` | Unique identifier for a partial refund. | yes |
+| `merchant_external_refund_id` | Your refund external ID. | no |
+
+Example Response:
+
+1.  Status code 200, example body:
+
+``` json
+{
+  "id":"refund_id", 
+  "merchant_external_refund_id":"{YOUR_REFUND_EXTERNAL_ID}"
+}
+```
+
+2.  Status code 400/500, example body:
+
+``` json
+{
+  "error":"bad_request, refund is not supported for this transaction"
+}
+```
+
+3.  When `external_id` is duplicated, status code 400, example body:
+
+``` json
+{
+  "message": "bad_request, psp client refund deposit: {\"error\":\"saveTxWithRefund(): refundSvc.Set(): duplicate external_id\"}",
+  "trace_id": "69f7bd2eebcf2834e8404ba6374902d0"
+}
 ```
 
 ## Get Merchant Account Balance
 
 Example request:
+
+**How to check account’s balance using merchant_cabinet API**
+
+``` bash
+curl https://merchant-api.aps.money/api/v2/merchantGUID/balance\
+        --header 'X-App-Token: APP_KEY'
+        --header 'X-Sign-Timestamp: {TIMESTAMP}' 
+        --header 'X-Signature: {SIGNATURE}' 
+        
+```
+
+**Old authentication method \[DEPRECATED\]**
 
 **How to check account’s balance using merchant_cabinet API**
 
@@ -1049,6 +1712,25 @@ Example response:
 Retrieve your transaction records in CSV format. Use the query parameters below to filter and customize your results.
 
 Example Request:
+
+**How to get a list of transactions**
+
+``` bash
+curl -X POST https://fpf-api.proc-gw.com/api/v3/merchantGUID/reports/operations/csv-stream\
+        --header 'X-App-Token: APP_KEY' 
+        --header 'X-Sign-Timestamp: {TIMESTAMP}' 
+        --header 'X-Signature: {SIGNATURE}' 
+        --header 'Content-Type: application/json' 
+        -d '{
+            "created_at": {
+                "from": "2024-01-01T00:00:00Z",
+                "to": "2024-12-31T23:59:59Z"
+            }
+        }'
+        
+```
+
+**Old authentication method \[DEPRECATED\]**
 
 **How to get a list of transactions**
 

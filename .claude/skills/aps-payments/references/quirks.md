@@ -112,6 +112,10 @@ metadata. The error message is carried on both statuses.
 Status callbacks wrap everything in `payload`. Retrieve responses may or may
 not, so both paths unwrap defensively with `$payload['payload'] ?? $payload`.
 
+Since the 2026-10-15 refresh the docs' callback examples show the fields at the
+top level with no wrapper. Live callbacks have not been re-observed since, so the
+defensive unwrap stays — it reads either shape.
+
 `src/Drivers/Aps/ApsAdapter.php:43-46`, `src/Drivers/Aps/ApsAdapter.php:68-71`
 
 ## 9. Money and checkout field names
@@ -170,8 +174,8 @@ The redirect path we do take, for contrast — not a site of any defect:
 
 ## 12. A complete APS connection needs ten keys, and only four are enforced
 
-Beyond `driver`, `base_url`, `merchant_guid`, `app_token` and `app_secret`, the
-driver also reads `callback_secret`, `deposit_method`, `redirect_url`,
+Beyond `driver`, `base_url`, `merchant_guid`, `app_token` and `private_key` (or
+the legacy `app_secret`, §14), the driver also reads `callback_secret`, `deposit_method`, `redirect_url`,
 `webhook_url`, `checkout_host_map` and `send_billing_details` (§13). Four of
 these examples used to show only
 the first five, so a connection copied from one threw on `charge()` for the
@@ -179,11 +183,14 @@ missing `deposit_method` and silently failed callback verification. All four now
 show the full set.
 
 What the examples still cannot tell you is when each is enforced. The
-constructor validates only `merchant_guid`, `app_token` and `app_secret`. A
+constructor validates only `merchant_guid`, `app_token` and one of
+`private_key`/`app_secret`. A
 missing `deposit_method` is not caught there — it throws at the first
 `charge()`, which is a runtime failure on a live deposit rather than a boot-time
 one. A missing `callback_secret` is never caught at all: verification silently
-falls back to the app secret and rejects every callback APS sends.
+falls back to the app secret and rejects every callback APS sends — and on a
+signed-request connection with no `app_secret` there is nothing to fall back to,
+so every callback is rejected rather than checked against an empty key.
 
 `Cashier::fakeConnection()` is the most reliable statement of the full shape,
 since the test suite exercises it.
@@ -240,3 +247,30 @@ Two related consequences worth knowing:
 `src/Drivers/Aps/ApsProvider.php` (`prepareChargeData()`, `BILLING_FIELD_MAP`,
 and the `Str::limit(…, 1000)` in `charge()`'s catch arm),
 `tests/Unit/Drivers/ApsProviderBillingTest.php`
+
+## 14. Two outbound auth schemes, and only one is issued to new accounts
+
+APS now authenticates requests with an ES256 (P-256) signature: `X-App-Token`,
+`X-Sign-Timestamp` (RFC 3339, ±5 minutes) and `X-Signature`, a Base64 DER
+signature over `TIMESTAMP + METHOD + URL + BODY`. The old `X-App-Token` +
+`X-App-Secret` pair is deprecated, still accepted for accounts onboarded before
+the switch, and **not available to new accounts** — a new account has an
+APP-TOKEN per uploaded public key and no app secret at all.
+
+A connection with `private_key` signs; one with only `app_secret` keeps the old
+headers, byte for byte. The APP-TOKEN is tied to the public key it was issued
+for, so rotating a key changes `app_token` too.
+
+The signature covers the URL as APS rebuilds it, so two things the docs make
+mandatory are done on the outgoing request itself, not only in the signed
+string: query names lower-cased and sorted (PHP's array-to-query order is not
+guaranteed), and the scheme forced to `https` with a lower-case host. Signing
+runs as Guzzle request middleware so the body signed is the body sent; Laravel
+runs that middleware before `Http::fake()`'s recorder, so `Http::assertSent` sees
+the signed request. Retries re-enter the middleware and get a fresh timestamp.
+
+Not yet exercised against live APS — the tests verify against the test-vector
+key pair the docs publish.
+
+`src/Drivers/Aps/ApsRequestSigner.php`, `src/Drivers/Aps/ApsClient.php`
+(`withAuth()`), `tests/Unit/Drivers/ApsRequestSignerTest.php`

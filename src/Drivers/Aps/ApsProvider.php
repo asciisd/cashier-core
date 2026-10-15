@@ -63,7 +63,10 @@ class ApsProvider implements PaymentProcessorInterface, PreparesChargeData, Prov
     {
         $this->config = $config;
 
-        if (empty($config['merchant_guid']) || empty($config['app_token']) || empty($config['app_secret'])) {
+        // `private_key` is APS's signed-request auth; `app_secret` is the
+        // deprecated header auth that accounts onboarded before it still use.
+        if (empty($config['merchant_guid']) || empty($config['app_token'])
+            || (empty($config['private_key']) && empty($config['app_secret']))) {
             throw new PaymentProcessingException('APS provider is not configured.');
         }
 
@@ -71,8 +74,11 @@ class ApsProvider implements PaymentProcessorInterface, PreparesChargeData, Prov
             baseUrl: rtrim((string) ($config['base_url'] ?? 'https://fpf-api.proc-gw.com'), '/'),
             merchantGuid: (string) $config['merchant_guid'],
             appToken: (string) $config['app_token'],
-            appSecret: (string) $config['app_secret'],
+            appSecret: isset($config['app_secret']) ? (string) $config['app_secret'] : null,
             callbackSecret: isset($config['callback_secret']) ? (string) $config['callback_secret'] : null,
+            signer: empty($config['private_key'])
+                ? null
+                : new ApsRequestSigner((string) $config['app_token'], (string) $config['private_key']),
         );
 
         $this->adapter = new ApsAdapter;
