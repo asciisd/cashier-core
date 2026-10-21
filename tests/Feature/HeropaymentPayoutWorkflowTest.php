@@ -90,6 +90,37 @@ it('sends the payout and records it as sent while status stays Processing', func
     $this->ledger->assertNothingMoved();
 });
 
+it('sends the host-stamped customer id and email from the withdrawal details', function () {
+    HeropaymentPayoutApi::fake();
+
+    hpWorkflow()->sendPayout(hpWithdrawal([
+        'withdrawal_details' => [
+            'payout_address' => 'TXyzCustomer',
+            'payout_currency' => 'usdttrc20',
+            'customer_id' => 10930,
+            'customer_email' => 'client@example.test',
+        ],
+    ]), hpActor());
+
+    Http::assertSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal')
+        && $request['customerId'] === '10930'
+        && $request['customerEmail'] === 'client@example.test');
+});
+
+it('falls back to the user id when neither a customer id nor a ledger account is stored', function () {
+    HeropaymentPayoutApi::fake();
+
+    hpWorkflow()->sendPayout(hpWithdrawal(['user_id' => 42, 'metadata' => [], 'withdrawal_details' => [
+        'payout_address' => 'TXyzCustomer',
+        'payout_currency' => 'usdttrc20',
+        'customer_id' => '  ',
+    ]]), hpActor());
+
+    Http::assertSent(fn (Request $request) => str_ends_with($request->url(), '/v2/withdrawal')
+        && $request['customerId'] === '42'
+        && ! isset($request['customerEmail']));
+});
+
 it('refuses non-Processing rows and rows already sent', function (array $overrides, string $message) {
     HeropaymentPayoutApi::fake();
 

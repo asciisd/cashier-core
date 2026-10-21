@@ -215,8 +215,9 @@ return [
     | Heropayments deposits open a hosted widget; withdrawals are pushed by
     | WithdrawalWorkflow::sendPayout() after an admin approves, and closed by
     | callback. The host stores payout_address, payout_currency (a
-    | Heropayments ticker such as usdttrc20), and optionally payout_extra_id
-    | and customer_email, in the withdrawal's details.
+    | Heropayments ticker such as usdttrc20), and optionally payout_extra_id,
+    | customer_id (sent as customerId; defaults to the ledger account, then the
+    | user id) and customer_email, in the withdrawal's details.
     |
     | 'heropayment' => [
     |     'driver' => 'heropayment',
