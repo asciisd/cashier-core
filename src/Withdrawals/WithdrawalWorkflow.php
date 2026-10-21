@@ -1083,10 +1083,13 @@ class WithdrawalWorkflow
 
         $extraId = trim((string) ($details['payout_extra_id'] ?? ''));
         $email = trim((string) ($details['customer_email'] ?? ''));
+        // The host's own customer id (e.g. the MT5 login) wins over the ledger
+        // account, which a host that moves funds itself never sets.
+        $customerId = trim((string) ($details['customer_id'] ?? ''));
 
         return new PayoutRequest(
             externalOrderId: $orderId,
-            customerId: (string) ($transaction->metadata['ledger_account'] ?? $transaction->user_id),
+            customerId: $customerId !== '' ? $customerId : (string) ($transaction->metadata['ledger_account'] ?? $transaction->user_id),
             amount: $this->payoutAmount($transaction, $details),
             currency: (string) $transaction->currency,
             payoutCurrency: strtolower($currency),

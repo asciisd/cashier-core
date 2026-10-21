@@ -12,7 +12,7 @@ readonly class PayoutRequest
 {
     /**
      * @param  string  $externalOrderId  the attempt's order id (the row's provider_transaction_id)
-     * @param  string  $customerId  MT5 login, falling back to the user id
+     * @param  string  $customerId  withdrawal_details.customer_id, else the ledger account, else the user id
      * @param  string  $amount  decimal string in $currency, e.g. "100.00"
      * @param  string  $currency  ISO code of the withdrawal, e.g. "USD"
      * @param  string  $payoutCurrency  PSP ticker the customer receives, e.g. "usdttrc20"
