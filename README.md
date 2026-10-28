@@ -236,6 +236,33 @@ for the events:
 | `WithdrawalRequested/Approved/Rejected/MarkedPaid/Cancelled/DebitFailed` | withdrawal lifecycle |
 | `AdminActionRecorded` | every audited admin money action |
 
+## Customer returns
+
+A hosted-page PSP sends the customer's browser back to you. Some send every
+outcome to the same URL — MyFatoorah appends `?paymentId=` and nothing else —
+so the return page has to ask the provider what happened. A provider that
+needs this implements `ResolvesReturnOutcome`:
+
+```php
+use Asciisd\CashierCore\Connections\ConnectionRegistry;
+use Asciisd\CashierCore\Contracts\ResolvesReturnOutcome;
+use Asciisd\CashierCore\Enums\ReturnOutcome;
+
+$provider = app(ConnectionRegistry::class)->get('myfatoorah_knet');
+
+$outcome = $provider instanceof ResolvesReturnOutcome
+    ? $provider->returnOutcome($request->query())
+    : ReturnOutcome::Unknown;
+
+return redirect()->route($outcome === ReturnOutcome::Failed ? 'payment.failed' : 'payment.success');
+```
+
+The return route and pages are yours; point the connection's `redirect_url`
+at it. `returnOutcome()` never writes — the webhook still decides the
+transaction's status — and never throws. Only show a failure page for
+`Failed`: `Unknown` (still in progress, or the lookup failed) may be a payment
+that went through.
+
 ## Withdrawals
 
 `WithdrawalWorkflow` implements the approve-first state machine: `request()`

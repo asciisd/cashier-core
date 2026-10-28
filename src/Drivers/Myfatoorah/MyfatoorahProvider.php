@@ -8,9 +8,11 @@ use Asciisd\CashierCore\Contracts\CustomerContract;
 use Asciisd\CashierCore\Contracts\PaymentProcessorInterface;
 use Asciisd\CashierCore\Contracts\PreparesChargeData;
 use Asciisd\CashierCore\Contracts\ProvidesWebhookTransactionId;
+use Asciisd\CashierCore\Contracts\ResolvesReturnOutcome;
 use Asciisd\CashierCore\DataObjects\PaymentResult;
 use Asciisd\CashierCore\DataObjects\RefundResult;
 use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
+use Asciisd\CashierCore\Enums\ReturnOutcome;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Asciisd\CashierCore\Logging\PaymentLogger;
 use Asciisd\CashierCore\Support\WebhookRoute;
@@ -32,7 +34,7 @@ use Illuminate\Support\Str;
  * no currency, and has no server-side duplicate guard, so it does not map
  * onto processRefund()'s synchronous contract without a design of its own.
  */
-class MyfatoorahProvider implements PaymentProcessorInterface, PreparesChargeData, ProvidesWebhookTransactionId
+class MyfatoorahProvider implements PaymentProcessorInterface, PreparesChargeData, ProvidesWebhookTransactionId, ResolvesReturnOutcome
 {
     /**
      * The eight currencies MyFatoorah's Order.Currency accepts. USD is not
@@ -252,6 +254,54 @@ class MyfatoorahProvider implements PaymentProcessorInterface, PreparesChargeDat
         }
 
         return (string) (data_get($payload, 'Invoice.Status') ?? 'unknown');
+    }
+
+    /**
+     * Where to land a customer MyFatoorah has sent back.
+     *
+     * V3 takes ONE `IntegrationUrls.Redirection` for every outcome and appends
+     * `?paymentId=` (sometimes `Id` as well), so a cancelled KNET payment
+     * arrives at the same URL as a paid one. MyFatoorah's guidance is to look
+     * the payment up and decide from the answer.
+     *
+     * Only a definite FAILED or CANCELED attempt is Failed. A PAID invoice is
+     * Succeeded even if this attempt reads otherwise — success is final
+     * (pitfalls.md entry 12). Everything else, including a lookup that fails,
+     * is Unknown.
+     *
+     * @param  array<string, mixed>  $query
+     */
+    public function returnOutcome(array $query): ReturnOutcome
+    {
+        $paymentId = $query['paymentId'] ?? $query['Id'] ?? null;
+        $paymentId = is_string($paymentId) ? trim($paymentId) : '';
+
+        if ($paymentId === '') {
+            return ReturnOutcome::Unknown;
+        }
+
+        try {
+            $payment = $this->client->getPayment($paymentId);
+        } catch (HttpClientException $e) {
+            // A connection timeout or DNS failure is thrown, not returned.
+            PaymentLogger::providerTransactionLookupFailed('myfatoorah', $paymentId, 0, $e->getMessage());
+
+            return ReturnOutcome::Unknown;
+        }
+
+        if ($payment === null) {
+            return ReturnOutcome::Unknown;
+        }
+
+        if (strtoupper((string) data_get($payment, 'Invoice.Status')) === 'PAID') {
+            return ReturnOutcome::Succeeded;
+        }
+
+        return match (strtoupper((string) data_get($payment, 'Transaction.Status'))) {
+            'SUCCESS' => ReturnOutcome::Succeeded,
+            'FAILED', 'CANCELED', 'CANCELLED' => ReturnOutcome::Failed,
+            default => ReturnOutcome::Unknown,
+        };
     }
 
     public function validatePaymentData(array $data): array

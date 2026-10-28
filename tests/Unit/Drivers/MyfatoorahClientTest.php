@@ -271,3 +271,45 @@ describe('getInvoice', function () {
         );
     });
 });
+
+describe('getPayment', function () {
+    it('gets /v3/payments/{id} and returns the Data object', function () {
+        Http::fake(['*/v3/payments/0707' => Http::response([
+            'IsSuccess' => true,
+            'Message' => '',
+            'Data' => [
+                'Invoice' => ['Id' => '6551972', 'Status' => 'PENDING'],
+                'Transaction' => ['Status' => 'FAILED', 'PaymentId' => '0707'],
+            ],
+        ])]);
+
+        expect($this->client->getPayment('0707')['Transaction']['Status'])->toBe('FAILED');
+
+        Http::assertSent(fn ($request) => $request->url() === 'https://apitest.myfatoorah.com/v3/payments/0707'
+            && $request->method() === 'GET'
+            && $request->hasHeader('Authorization', 'Bearer test-api-key'));
+    });
+
+    it('url-encodes the payment id, which arrives from the browser', function () {
+        Http::fake(['*' => Http::response(['IsSuccess' => true, 'Data' => []])]);
+
+        $this->client->getPayment('07/../invoices');
+
+        Http::assertSent(fn ($request) => $request->url() === 'https://apitest.myfatoorah.com/v3/payments/07%2F..%2Finvoices');
+    });
+
+    it('returns null and logs a rejected lookup', function () {
+        Log::spy();
+        Log::shouldReceive('channel')->andReturnSelf();
+
+        Http::fake(['*' => Http::response(['IsSuccess' => false, 'Message' => 'Invalid PaymentId'])]);
+
+        expect($this->client->getPayment('0707'))->toBeNull();
+
+        Log::shouldHaveReceived('warning')->withArgs(
+            fn (string $message, array $context) => $message === 'Provider transaction lookup failed'
+                && $context['provider_transaction_id'] === '0707'
+                && str_contains($context['body'], 'Invalid PaymentId')
+        );
+    });
+});

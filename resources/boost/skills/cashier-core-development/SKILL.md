@@ -1,6 +1,6 @@
 ---
 name: cashier-core-development
-description: "Build on and extend the asciisd/cashier-core v2 payment engine. Activates when working with named connections and drivers, ConnectionRegistry or Connections, PaymentService charges/refunds/sync, the webhook pipeline (WebhookProcessor, ReplayGuard, TransferClaim, WebhookRelay), the approve-first WithdrawalWorkflow, the FundsLedger / CustomerContract / PreparesChargeData / ProvidesWebhookTransactionId / ResolvesFundingAccount / FeeConfigurationContract contracts, fee calculation and settlement, the bundled APS/Jenapay/Heropayment/Payport/Sticpay/MyFatoorah drivers, payload sanitizing and encryption, cashier:* artisan commands, or the Cashier::fake / WebhookSimulator / FakeLedger testing seams."
+description: "Build on and extend the asciisd/cashier-core v2 payment engine. Activates when working with named connections and drivers, ConnectionRegistry or Connections, PaymentService charges/refunds/sync, the webhook pipeline (WebhookProcessor, ReplayGuard, TransferClaim, WebhookRelay), the approve-first WithdrawalWorkflow, the FundsLedger / CustomerContract / PreparesChargeData / ProvidesWebhookTransactionId / ResolvesReturnOutcome / ResolvesFundingAccount / FeeConfigurationContract contracts, fee calculation and settlement, the bundled APS/Jenapay/Heropayment/Payport/Sticpay/MyFatoorah drivers, payload sanitizing and encryption, cashier:* artisan commands, or the Cashier::fake / WebhookSimulator / FakeLedger testing seams."
 ---
 
 # Cashier Core Development (v2)
@@ -48,7 +48,8 @@ Contracts/
 ├── ResolvesFundingAccount     — which account a deposit funds
 ├── FeeConfigurationContract   — the host's per-method pricing
 ├── PreparesChargeData         — a driver shaping its own charge payload
-└── ProvidesWebhookTransactionId — correlation id extraction from a callback
+├── ProvidesWebhookTransactionId — correlation id extraction from a callback
+└── ResolvesReturnOutcome      — which page a returning customer lands on (read-only)
 Services/
 ├── PaymentService             — processPayment / processRefund / syncTransaction
 └── Webhooks/{WebhookProcessor, ReplayGuard, WebhookRelay}
@@ -296,6 +297,8 @@ would — which is why it is the recovery tool for drivers with no resync endpoi
      id differently from its charge response *must* implement this or its webhooks never find their
      transaction.
    - `PreparesChargeData` — if it needs routing hints, a fixed currency, or a billing shape.
+   - `ResolvesReturnOutcome` — if the PSP sends every outcome to one return URL and the result has
+     to be looked up. Read-only, never throws, and only a definite failure is `Failed`.
    Constructor takes `array $config = []` (the connection config) and throws
    `PaymentProcessingException` when credentials are missing. Throw `\BadMethodCallException` for
    unsupported operations and report that honestly through `supports()`.

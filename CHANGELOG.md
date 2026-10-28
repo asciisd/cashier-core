@@ -1,3 +1,8 @@
+## 3.2.0
+
+- New `ResolvesReturnOutcome` contract and `ReturnOutcome` enum (`Succeeded`, `Failed`, `Unknown`) for providers that send every outcome to one return URL. `returnOutcome(array $query)` is read-only and never throws.
+- MyFatoorah implements it: the `paymentId` (or `Id`) MyFatoorah appends to the redirect is looked up with the new `MyfatoorahClient::getPayment()` (`GET /v3/payments/{id}`). A PAID invoice is `Succeeded`, a FAILED or CANCELED attempt is `Failed`, anything else (in progress, lookup failure, no id) is `Unknown`. Before this, a host pointing `redirect_url` at its success page showed success for a cancelled KNET payment.
+
 ## 3.1.1
 
 - Payouts: `PayoutRequest::$customerId` now comes from `withdrawal_details.customer_id` when the host stores one, before `metadata.ledger_account` and the user id. A host that debits the funds system itself (and so never sets `ledger_account`) can now send its own customer identifier, such as the MT5 login, matching what its deposits send.

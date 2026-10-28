@@ -5,9 +5,13 @@ declare(strict_types=1);
 use Asciisd\CashierCore\Contracts\CustomerContract;
 use Asciisd\CashierCore\Drivers\Myfatoorah\MyfatoorahProvider;
 use Asciisd\CashierCore\Enums\PaymentStatus;
+use Asciisd\CashierCore\Enums\ReturnOutcome;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Sleep;
+use Illuminate\Validation\ValidationException;
 
 function myfatoorahConfig(array $overrides = []): array
 {
@@ -249,9 +253,9 @@ describe('charge', function () {
         //
         // The name lookup is built once, so a route added mid-test is
         // invisible to the URL generator until it is refreshed.
-        Illuminate\Support\Facades\Route::post('psp/callbacks/myfatoorah', fn () => null)
+        Route::post('psp/callbacks/myfatoorah', fn () => null)
             ->name('webhooks.myfatoorah');
-        Illuminate\Support\Facades\Route::getRoutes()->refreshNameLookups();
+        Route::getRoutes()->refreshNameLookups();
 
         (new MyfatoorahProvider(myfatoorahConfig(['webhook_url' => null])))
             ->charge(['amount' => 100.0]);
@@ -279,7 +283,7 @@ describe('charge', function () {
 
     it('rejects a non-positive amount before calling out', function () {
         expect(fn () => (new MyfatoorahProvider(myfatoorahConfig()))->charge(['amount' => 0]))
-            ->toThrow(Illuminate\Validation\ValidationException::class);
+            ->toThrow(ValidationException::class);
     });
 
     /*
@@ -288,7 +292,7 @@ describe('charge', function () {
      * lets it escape as an uncaught 500 with nothing logged.
      */
     it('converts a transport failure into a PaymentProcessingException', function () {
-        Http::fake(fn () => throw new Illuminate\Http\Client\ConnectionException('cURL error 28: timed out'));
+        Http::fake(fn () => throw new ConnectionException('cURL error 28: timed out'));
 
         expect(fn () => (new MyfatoorahProvider(myfatoorahConfig()))->charge(['amount' => 100.0]))
             ->toThrow(PaymentProcessingException::class, 'could not be created');
@@ -437,4 +441,76 @@ describe('capability reporting', function () {
             ->and(fn () => $provider->authorize([]))->toThrow(BadMethodCallException::class)
             ->and(fn () => $provider->void('6409988'))->toThrow(BadMethodCallException::class);
     });
+});
+
+describe('returnOutcome', function () {
+    function myfatoorahPaymentDetails(string $invoiceStatus, string $transactionStatus): array
+    {
+        return [
+            'IsSuccess' => true,
+            'Message' => '',
+            'Data' => [
+                'Invoice' => ['Id' => '6551972', 'Status' => $invoiceStatus],
+                'Transaction' => ['Status' => $transactionStatus, 'PaymentId' => '0707'],
+            ],
+        ];
+    }
+
+    it('reads a paid invoice as succeeded', function (string $transactionStatus) {
+        Http::fake(['*/v3/payments/0707' => Http::response(myfatoorahPaymentDetails('PAID', $transactionStatus))]);
+
+        expect((new MyfatoorahProvider(myfatoorahConfig()))->returnOutcome(['paymentId' => '0707']))
+            ->toBe(ReturnOutcome::Succeeded);
+    })->with(['SUCCESS', 'FAILED']);
+
+    it('reads a cancelled or failed attempt as failed', function (string $transactionStatus) {
+        Http::fake(['*/v3/payments/0707' => Http::response(myfatoorahPaymentDetails('PENDING', $transactionStatus))]);
+
+        expect((new MyfatoorahProvider(myfatoorahConfig()))->returnOutcome(['paymentId' => '0707', 'Id' => '0707']))
+            ->toBe(ReturnOutcome::Failed);
+    })->with(['FAILED', 'CANCELED', 'Canceled']);
+
+    it('falls back to the Id parameter', function () {
+        Http::fake(['*/v3/payments/0707' => Http::response(myfatoorahPaymentDetails('PENDING', 'CANCELED'))]);
+
+        expect((new MyfatoorahProvider(myfatoorahConfig()))->returnOutcome(['Id' => '0707']))
+            ->toBe(ReturnOutcome::Failed);
+    });
+
+    /*
+     * Unknown is the outcome a host must not turn into "your payment failed":
+     * the money may have moved, and the webhook settles it either way.
+     */
+    it('is unknown when the outcome cannot be confirmed', function (?array $body, int $status) {
+        Sleep::fake();
+        Http::fake(['*' => Http::response($body, $status)]);
+
+        expect((new MyfatoorahProvider(myfatoorahConfig()))->returnOutcome(['paymentId' => '0707']))
+            ->toBe(ReturnOutcome::Unknown);
+    })->with([
+        'still in progress' => [myfatoorahPaymentDetails('PENDING', 'INPROGRESS'), 200],
+        'lookup rejected' => [['IsSuccess' => false, 'Message' => 'Invalid key'], 200],
+        'gateway error' => [null, 500],
+    ]);
+
+    it('is unknown when the connection itself fails', function () {
+        Sleep::fake();
+        Http::fake(fn () => throw new ConnectionException('timed out'));
+
+        expect((new MyfatoorahProvider(myfatoorahConfig()))->returnOutcome(['paymentId' => '0707']))
+            ->toBe(ReturnOutcome::Unknown);
+    });
+
+    it('is unknown without a payment id, and never calls MyFatoorah', function (array $query) {
+        Http::fake();
+
+        expect((new MyfatoorahProvider(myfatoorahConfig()))->returnOutcome($query))
+            ->toBe(ReturnOutcome::Unknown);
+
+        Http::assertNothingSent();
+    })->with([
+        'missing' => [[]],
+        'blank' => [['paymentId' => '  ']],
+        'array' => [['paymentId' => ['0707']]],
+    ]);
 });
