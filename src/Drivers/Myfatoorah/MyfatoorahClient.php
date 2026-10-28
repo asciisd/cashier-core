@@ -118,6 +118,34 @@ final class MyfatoorahClient
     }
 
     /**
+     * Fetch one payment attempt by its PaymentId. Returns the `Data` object
+     * (`Invoice`, `Transaction`, …), or null when the lookup failed.
+     *
+     * The PaymentId is what MyFatoorah appends to the redirect URL, so this
+     * is the lookup a browser return can make. Correlation with a stored
+     * transaction still goes through the InvoiceId — see getInvoice().
+     *
+     * @return array<string, mixed>|null
+     */
+    public function getPayment(string $paymentId): ?array
+    {
+        $response = $this->idempotentRequest()->get("{$this->baseUrl}/v3/payments/".rawurlencode($paymentId));
+
+        try {
+            return $this->envelope($response);
+        } catch (PaymentProcessingException $e) {
+            PaymentLogger::providerTransactionLookupFailed(
+                'myfatoorah',
+                $paymentId,
+                $response->status(),
+                $e->getMessage().' | '.Str::limit($response->body(), 500),
+            );
+
+            return null;
+        }
+    }
+
+    /**
      * Whether this rejection is the "no transactions" one.
      *
      * `api-v3.md`, the 🚧 note above Get Invoice by InvoiceId: "If the invoice

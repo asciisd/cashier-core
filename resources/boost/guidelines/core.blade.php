@@ -132,6 +132,15 @@ Side effects belong to the host: the package sends no mail and touches no CRM. L
 `DepositSucceeded`/`DepositFailed`/`DepositHeldForReview`, `FundsCredited`/`FundsCreditFailed`,
 `FeeDriftDetected`, `RefundSucceeded`/`RefundFailed`, the `Withdrawal*` lifecycle, `AdminActionRecorded`).
 
+### Customer returns
+
+A provider that sends every outcome to one return URL (MyFatoorah) implements `ResolvesReturnOutcome`:
+`returnOutcome($request->query())` returns `ReturnOutcome::Succeeded|Failed|Unknown`. The host owns the
+return route and the result pages and points the connection's `redirect_url` at it.
+
+- `returnOutcome()` is read-only and never throws. **Never** update a transaction from it — the webhook is the only writer.
+- Show a failure page **only** for `Failed`. `Unknown` (in progress, lookup failed, no id) may be a payment that went through; telling the customer to pay again risks a second charge.
+
 ### Withdrawals
 
 `WithdrawalWorkflow` is the approve-first state machine: `request()` creates a Pending row
