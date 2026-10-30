@@ -99,6 +99,7 @@ class XoalaProvider implements PaymentProcessorInterface, PreparesChargeData, Pr
             // right for free.
             cacheKey: md5($this->baseUrl().'|'.$config['member_id']),
             username: ($config['username'] ?? null) ?: null,
+            partnerId: (string) ($config['partner_id'] ?? '') ?: null,
         );
 
         $this->adapter = new XoalaAdapter;
