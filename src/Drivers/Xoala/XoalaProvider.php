@@ -8,9 +8,12 @@ use Asciisd\CashierCore\Contracts\CustomerContract;
 use Asciisd\CashierCore\Contracts\PaymentProcessorInterface;
 use Asciisd\CashierCore\Contracts\PreparesChargeData;
 use Asciisd\CashierCore\Contracts\ProvidesWebhookTransactionId;
+use Asciisd\CashierCore\Contracts\ResolvesReturnOutcome;
 use Asciisd\CashierCore\DataObjects\PaymentResult;
 use Asciisd\CashierCore\DataObjects\RefundResult;
 use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
+use Asciisd\CashierCore\Enums\PaymentStatus;
+use Asciisd\CashierCore\Enums\ReturnOutcome;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Asciisd\CashierCore\Models\Transaction;
 use Asciisd\CashierCore\Support\WebhookRoute;
@@ -33,7 +36,7 @@ use Illuminate\Support\Str;
  * for non-card methods, and the Invoice API is built around emailing the
  * customer a link that expires.
  */
-class XoalaProvider implements PaymentProcessorInterface, PreparesChargeData, ProvidesWebhookTransactionId
+class XoalaProvider implements PaymentProcessorInterface, PreparesChargeData, ProvidesWebhookTransactionId, ResolvesReturnOutcome
 {
     /**
      * The route the bridge is registered under, assembled from the checkout
@@ -271,6 +274,37 @@ class XoalaProvider implements PaymentProcessorInterface, PreparesChargeData, Pr
         $id = (string) ($payload['merchantTransactionId'] ?? '');
 
         return $id !== '' ? $id : null;
+    }
+
+    /**
+     * Read the outcome off the redirect-back POST.
+     *
+     * Xoala sends the customer to `merchantRedirectUrl` with a form POST that
+     * carries the short status under `status` and the same checksum as a
+     * notification. Only a payload our secure key signed may decide the page:
+     * an unsigned or tampered one is Unknown, which keeps the customer on the
+     * success page rather than telling them to pay again.
+     *
+     * @param  array<string, mixed>  $query  the POST body
+     */
+    public function returnOutcome(array $query): ReturnOutcome
+    {
+        if (! $this->signatureService->verifyCallback($query)) {
+            return ReturnOutcome::Unknown;
+        }
+
+        $raw = $query['transactionStatus'] ?? $query['status'] ?? null;
+        $status = $this->adapter->mapShortStatus($raw);
+
+        if ($status === PaymentStatus::Pending) {
+            $status = $this->adapter->mapStatus($raw);
+        }
+
+        return match ($status) {
+            PaymentStatus::Succeeded => ReturnOutcome::Succeeded,
+            PaymentStatus::Failed, PaymentStatus::Canceled => ReturnOutcome::Failed,
+            default => ReturnOutcome::Unknown,
+        };
     }
 
     public function getName(): string

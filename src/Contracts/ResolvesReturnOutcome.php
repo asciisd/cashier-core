@@ -17,7 +17,9 @@ interface ResolvesReturnOutcome
 {
     /**
      * Resolve the outcome from the query string the provider appended to the
-     * return URL. Must not throw: anything unreadable is Unknown.
+     * return URL, or from the POST body for a provider that returns the
+     * customer with a form POST. Must not throw: anything unreadable is
+     * Unknown.
      *
      * @param  array<string, mixed>  $query
      */

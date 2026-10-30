@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Asciisd\CashierCore\Drivers\Xoala\XoalaProvider;
 use Asciisd\CashierCore\Drivers\Xoala\XoalaSignatureService;
 use Asciisd\CashierCore\Enums\PaymentStatus;
+use Asciisd\CashierCore\Enums\ReturnOutcome;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Asciisd\CashierCore\Models\Transaction;
 use Illuminate\Support\Facades\Http;
@@ -245,3 +246,44 @@ it('throws for the operations it does not implement', function (string $method, 
     ['authorize', [['amount' => 1.0]]],
     ['void', ['DEP-1']],
 ]);
+
+function xoalaReturnPayload(string $status, array $overrides = []): array
+{
+    $payload = array_merge([
+        'paymentId' => '98765',
+        'merchantTransactionId' => 'DEP-1',
+        'amount' => '100.00',
+        'status' => $status,
+    ], $overrides);
+
+    $payload['checksum'] ??= (new XoalaSignatureService('11344', 'secure-key'))->forCallback(
+        $payload['paymentId'],
+        $payload['merchantTransactionId'],
+        $payload['amount'],
+        $payload['status'],
+    );
+
+    return $payload;
+}
+
+it('resolves the outcome of a signed redirect-back post', function (string $status, ReturnOutcome $expected) {
+    expect(xoalaProvider()->returnOutcome(xoalaReturnPayload($status)))->toBe($expected);
+})->with([
+    'approved' => ['Y', ReturnOutcome::Succeeded],
+    'declined' => ['N', ReturnOutcome::Failed],
+    'cancelled' => ['C', ReturnOutcome::Failed],
+    'pending' => ['P', ReturnOutcome::Unknown],
+    'at the ACS page' => ['3D', ReturnOutcome::Unknown],
+]);
+
+it('treats an unsigned or tampered redirect-back post as unknown', function () {
+    $provider = xoalaProvider();
+
+    expect($provider->returnOutcome(xoalaReturnPayload('N', ['checksum' => 'forged'])))->toBe(ReturnOutcome::Unknown)
+        ->and($provider->returnOutcome([]))->toBe(ReturnOutcome::Unknown);
+
+    $tampered = xoalaReturnPayload('N');
+    $tampered['status'] = 'Y';
+
+    expect($provider->returnOutcome($tampered))->toBe(ReturnOutcome::Unknown);
+});

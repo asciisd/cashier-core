@@ -257,6 +257,11 @@ $outcome = $provider instanceof ResolvesReturnOutcome
 return redirect()->route($outcome === ReturnOutcome::Failed ? 'payment.failed' : 'payment.success');
 ```
 
+Xoala implements it too, but returns the customer with a form POST carrying a
+signed status rather than a query string: pass `$request->post()` instead, from
+a route that accepts POST without a CSRF token. A body the connection's secure
+key did not sign is `Unknown`.
+
 The return route and pages are yours; point the connection's `redirect_url`
 at it. `returnOutcome()` never writes — the webhook still decides the
 transaction's status — and never throws. Only show a failure page for
