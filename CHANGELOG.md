@@ -1,3 +1,9 @@
+## 3.4.0
+
+- Xoala prefills the hosted checkout. The checkout bridge now resolves the deposit's customer (`cashier-core.models.customer`, by the transaction's `user_id`) and, when it implements `ProvidesBillingDetails`, sends `firstName`, `lastName`, `email`, `telnocc`, `phone`, `country`, `street`, `city`, `state`, `postcode` and `dateOfBirth`, plus the browser's IPv4 as `ip`. The details are read when the page renders and are never written to the transaction's metadata. Every value is normalised to Xoala's field pattern or dropped; none is invented. A customer without billing details still gets its name and email. Turn it off with `send_customer_details => false` on the connection.
+- `ProvidesBillingDetails` documents an optional `phone_country_code` key (the calling code `phone` starts with). Xoala uses it to split `telnocc` from the number; without it the full number is sent as `phone`.
+- `XoalaProvider::checkoutForm()` takes optional `?CustomerContract $customer` and `?string $ip` arguments. Existing callers are unaffected.
+
 ## 3.3.1
 
 - Xoala: new optional `partner_id` connection setting, sent as `authentication.partnerId` when generating the REST auth token. An account boarded through a partner is refused a token without it ("Invalid partner ID OR partner ID is misconfigured", code 30055), so every `retrieve()` / sync failed and the deposit was logged as not found at the provider. Left off the request when unset.

@@ -130,3 +130,44 @@ it('finds the deposit through a host owner scope', function () {
         ->assertOk()
         ->assertSee('name="merchantTransactionId" value="DEP-1"', false);
 });
+
+it('prefills the hosted page from the deposit’s customer and browser', function () {
+    Illuminate\Support\Facades\Schema::create('billing_customers', function (Illuminate\Database\Schema\Blueprint $table) {
+        $table->id();
+        $table->string('name');
+        $table->string('email');
+        $table->string('phone')->nullable();
+        $table->string('phone_country_code')->nullable();
+        $table->string('country')->nullable();
+    });
+    config(['cashier-core.models.customer' => Asciisd\CashierCore\Tests\Fixtures\BillingCustomer::class]);
+
+    $customer = Asciisd\CashierCore\Tests\Fixtures\BillingCustomer::query()->create([
+        'name' => 'Sara Ali',
+        'email' => 'sara@example.com',
+        'phone' => '+96550209185',
+        'phone_country_code' => '965',
+        'country' => 'kw',
+    ]);
+    xoalaTransaction(['user_id' => $customer->getKey()]);
+
+    $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.9'])
+        ->get(xoalaBridgeUrl())
+        ->assertOk()
+        ->assertSee('name="firstName" value="Sara"', false)
+        ->assertSee('name="lastName" value="Ali"', false)
+        ->assertSee('name="telnocc" value="965"', false)
+        ->assertSee('name="phone" value="50209185"', false)
+        ->assertSee('name="country" value="KW"', false)
+        ->assertSee('name="ip" value="203.0.113.9"', false);
+});
+
+it('still renders the form when the deposit’s customer cannot be found', function () {
+    config(['cashier-core.models.customer' => null]);
+    xoalaTransaction();
+
+    $this->get(xoalaBridgeUrl())
+        ->assertOk()
+        ->assertSee('name="merchantTransactionId" value="DEP-1"', false)
+        ->assertDontSee('name="phone"', false);
+});

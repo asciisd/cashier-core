@@ -7,6 +7,7 @@ namespace Asciisd\CashierCore\Drivers\Xoala;
 use Asciisd\CashierCore\Contracts\CustomerContract;
 use Asciisd\CashierCore\Contracts\PaymentProcessorInterface;
 use Asciisd\CashierCore\Contracts\PreparesChargeData;
+use Asciisd\CashierCore\Contracts\ProvidesBillingDetails;
 use Asciisd\CashierCore\Contracts\ProvidesWebhookTransactionId;
 use Asciisd\CashierCore\Contracts\ResolvesReturnOutcome;
 use Asciisd\CashierCore\DataObjects\PaymentResult;
@@ -151,9 +152,15 @@ class XoalaProvider implements PaymentProcessorInterface, PreparesChargeData, Pr
      * value is read from the transaction row — so the checksum is never
      * persisted and there is no second copy of it to drift.
      *
+     * The customer's details are read here too, from the live customer model,
+     * so Xoala's hosted page arrives prefilled without a phone number, address
+     * or date of birth ever being copied into the transaction's (unencrypted)
+     * metadata. `$ip` is the browser that opened the bridge — the customer
+     * themself, which the charge request is not guaranteed to be.
+     *
      * @return array{action: string, fields: array<string, string>}
      */
-    public function checkoutForm(Transaction $transaction): array
+    public function checkoutForm(Transaction $transaction, ?CustomerContract $customer = null, ?string $ip = null): array
     {
         $merchantTransactionId = (string) $transaction->provider_transaction_id;
 
@@ -194,7 +201,7 @@ class XoalaProvider implements PaymentProcessorInterface, PreparesChargeData, Pr
 
         return [
             'action' => $this->baseUrl().'/transaction/Checkout',
-            'fields' => array_merge($extras, $fields, [
+            'fields' => array_merge($extras, $this->customerFields($customer, $ip), $fields, [
                 'checksum' => $this->signatureService->forCheckout(
                     (string) $this->config['totype'],
                     $amount,
@@ -360,6 +367,100 @@ class XoalaProvider implements PaymentProcessorInterface, PreparesChargeData, Pr
             'country' => strtoupper((string) ($metadata['user_country'] ?? '')),
             'orderDescription' => (string) ($data['description'] ?? ''),
         ], fn (string $value): bool => $value !== '');
+    }
+
+    /**
+     * The customer details Xoala's hosted page would otherwise ask for.
+     *
+     * Xoala validates every one of these against a strict pattern, so each is
+     * normalised to that pattern or dropped. A dropped field costs the customer
+     * one input on the hosted page; a malformed one sent can cost the whole
+     * deposit. Nothing is ever invented in place of a missing value.
+     *
+     * Off with `send_customer_details => false` on the connection.
+     *
+     * @return array<string, string>
+     */
+    private function customerFields(?CustomerContract $customer, ?string $ip): array
+    {
+        if (($this->config['send_customer_details'] ?? true) === false) {
+            return [];
+        }
+
+        $details = $customer instanceof ProvidesBillingDetails ? $customer->cashierBillingDetails() : [];
+        $text = fn (string $key): string => trim((string) ($details[$key] ?? ''));
+
+        $firstName = $text('first_name');
+        $lastName = $text('last_name');
+
+        if ($firstName === '' && $lastName === '' && $customer !== null) {
+            $name = trim($customer->cashierName());
+            $firstName = Str::before($name, ' ');
+            $lastName = $name === $firstName ? '' : trim(Str::after($name, ' '));
+        }
+
+        $email = $text('email') ?: (string) $customer?->cashierEmail();
+        [$telnocc, $phone] = $this->phoneParts($text('phone'), $text('phone_country_code'));
+        $dateOfBirth = preg_replace('/\D/', '', $text('date_of_birth'));
+
+        return array_filter([
+            'firstName' => $this->pattern($firstName, '/^[A-Za-z0-9 ]{1,50}$/'),
+            'lastName' => $this->pattern($lastName, '/^[A-Za-z0-9 ]{1,50}$/'),
+            'email' => filter_var($email, FILTER_VALIDATE_EMAIL) !== false && strlen($email) <= 100 ? $email : null,
+            'telnocc' => $telnocc,
+            'phone' => $phone,
+            'country' => $this->pattern(strtoupper($text('country')), '/^[A-Z]{2}$/'),
+            'street' => $this->clean($text('street'), '/[^A-Za-z0-9 ,]/', 100),
+            'city' => $this->clean($text('city'), "/[^A-Za-z0-9 .,'-]/", 50),
+            'state' => $this->clean($text('region'), "/[^A-Za-z0-9 .,'-]/", 30),
+            'postcode' => $this->pattern(preg_replace('/[\s-]/', '', $text('zip_code')), '/^[A-Za-z0-9]{2,9}$/'),
+            'dateOfBirth' => $this->pattern((string) $dateOfBirth, '/^\d{8}$/'),
+            'ip' => filter_var((string) $ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false ? (string) $ip : null,
+        ], fn (?string $value): bool => $value !== null && $value !== '');
+    }
+
+    /**
+     * Split a phone number into Xoala's country code and number.
+     *
+     * The country code is only ever taken from the customer model: guessing
+     * where an E.164 calling code ends needs a numbering-plan table this
+     * package does not carry. Without one the full number is sent alone, which
+     * `phone`'s pattern accepts.
+     *
+     * @return array{0: ?string, 1: ?string}
+     */
+    private function phoneParts(string $phone, string $countryCode): array
+    {
+        $digits = fn (string $value): string => (string) preg_replace('/\D/', '', $value);
+        $code = $digits($countryCode);
+        $number = $digits($phone);
+
+        if ($code !== '' && strlen($code) <= 4 && str_starts_with($number, $code) && str_starts_with(trim($phone), '+')) {
+            $national = substr($number, strlen($code));
+
+            return strlen($national) >= 6 && strlen($national) <= 24 ? [$code, $national] : [null, null];
+        }
+
+        $full = str_starts_with(trim($phone), '+') ? '+'.$number : $number;
+
+        return [null, strlen($full) >= 6 && strlen($full) <= 24 ? $full : null];
+    }
+
+    private function pattern(string $value, string $pattern): ?string
+    {
+        return preg_match($pattern, $value) === 1 ? $value : null;
+    }
+
+    /**
+     * Strip what Xoala's pattern refuses and keep the rest, so "12 Main St."
+     * still prefills as "12 Main St" rather than being dropped outright.
+     */
+    private function clean(string $value, string $disallowed, int $maxLength): ?string
+    {
+        $value = trim((string) preg_replace('/\s+/', ' ', (string) preg_replace($disallowed, ' ', $value)));
+        $value = trim(preg_replace('/\s*,\s*/', ', ', $value) ?? $value, ' ,');
+
+        return $value !== '' ? mb_substr($value, 0, $maxLength) : null;
     }
 
     /**

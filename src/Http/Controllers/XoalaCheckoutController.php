@@ -6,11 +6,13 @@ namespace Asciisd\CashierCore\Http\Controllers;
 
 use Asciisd\CashierCore\Cashier;
 use Asciisd\CashierCore\Connections\ConnectionRegistry;
+use Asciisd\CashierCore\Contracts\CustomerContract;
 use Asciisd\CashierCore\Drivers\Xoala\XoalaProvider;
 use Asciisd\CashierCore\Enums\PaymentStatus;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Asciisd\CashierCore\Exceptions\ProcessorNotFoundException;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -30,7 +32,7 @@ class XoalaCheckoutController extends Controller
 {
     private const DRIVER = 'xoala';
 
-    public function __invoke(string $transaction, ConnectionRegistry $registry): View
+    public function __invoke(Request $request, string $transaction, ConnectionRegistry $registry): View
     {
         $model = Cashier::transactionModel();
 
@@ -64,11 +66,29 @@ class XoalaCheckoutController extends Controller
 
         abort_unless($provider instanceof XoalaProvider, Response::HTTP_NOT_FOUND);
 
-        $form = $provider->checkoutForm($record);
+        $form = $provider->checkoutForm($record, $this->customerFor($record), $request->ip());
 
         return view('cashier-core::xoala.checkout', [
             'action' => $form['action'],
             'fields' => $form['fields'],
         ]);
+    }
+
+    /**
+     * The customer the deposit belongs to, so the hosted page can be
+     * prefilled. A missing model or customer only means Xoala asks for the
+     * details itself — it must never stop the customer reaching the page.
+     */
+    private function customerFor(object $record): ?CustomerContract
+    {
+        $customerModel = Cashier::customerModel();
+
+        if (! is_string($customerModel) || ! class_exists($customerModel) || empty($record->user_id)) {
+            return null;
+        }
+
+        $customer = $customerModel::query()->find($record->user_id);
+
+        return $customer instanceof CustomerContract ? $customer : null;
     }
 }

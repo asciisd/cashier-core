@@ -176,6 +176,11 @@ return [
     |     'webhook_url' => env('XOALA_WEBHOOK_URL'),
     |     // Optional. Hosted page language; defaults to the app locale.
     |     'language' => env('XOALA_LANGUAGE'),
+    |     // Optional, default true. Prefills the hosted page from a customer
+    |     // implementing ProvidesBillingDetails (name, email, phone, country,
+    |     // address, date of birth) plus the browser's IPv4. Each value is
+    |     // dropped rather than sent when it fails Xoala's field pattern.
+    |     'send_customer_details' => true,
     | ],
     |
     | A second Xoala merchant account is another connection on the same driver.
