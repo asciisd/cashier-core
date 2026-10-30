@@ -134,8 +134,9 @@ Side effects belong to the host: the package sends no mail and touches no CRM. L
 
 ### Customer returns
 
-A provider that sends every outcome to one return URL (MyFatoorah) implements `ResolvesReturnOutcome`:
-`returnOutcome($request->query())` returns `ReturnOutcome::Succeeded|Failed|Unknown`. The host owns the
+A provider that sends every outcome to one return URL (MyFatoorah, Xoala) implements `ResolvesReturnOutcome`:
+`returnOutcome($request->query())` returns `ReturnOutcome::Succeeded|Failed|Unknown`. Xoala returns with a form
+POST, so pass `$request->post()` from a POST route outside CSRF; an unsigned body is `Unknown`. The host owns the
 return route and the result pages and points the connection's `redirect_url` at it.
 
 - `returnOutcome()` is read-only and never throws. **Never** update a transaction from it — the webhook is the only writer.

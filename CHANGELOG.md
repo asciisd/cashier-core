@@ -1,3 +1,8 @@
+## 3.3.0
+
+- Xoala implements `ResolvesReturnOutcome`. Xoala returns the customer to `merchantRedirectUrl` with a form POST carrying the short status under `status` and the callback checksum; pass the POST body to `returnOutcome()`. `Y` is `Succeeded`, `N` and `C` are `Failed`, anything else is `Unknown`, and so is any body whose checksum the connection's secure key did not produce.
+- Xoala: the checkout bridge (`cashier.checkout.xoala`) no longer 404s on hosts whose transaction model carries an owner scope. The route runs without a session, so the scope hid every row; the lookup now drops `cashierBypassedScopes()`, as the webhook path does. The signature and the Pending check still guard the page.
+
 ## 3.2.0
 
 - New `ResolvesReturnOutcome` contract and `ReturnOutcome` enum (`Succeeded`, `Failed`, `Unknown`) for providers that send every outcome to one return URL. `returnOutcome(array $query)` is read-only and never throws.

@@ -34,7 +34,11 @@ class XoalaCheckoutController extends Controller
     {
         $model = Cashier::transactionModel();
 
+        // The link is opened in the customer's browser, with no session on
+        // this route, so a host's owner scope would hide the row and 404 every
+        // checkout. The signature is the authorisation here, not the session.
         $record = $model::query()
+            ->withoutGlobalScopes($model::cashierBypassedScopes())
             ->where('provider', self::DRIVER)
             ->where('provider_transaction_id', $transaction)
             ->first();

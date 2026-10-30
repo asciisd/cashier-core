@@ -7,6 +7,7 @@ use Asciisd\CashierCore\Drivers\Xoala\XoalaSignatureService;
 use Asciisd\CashierCore\Enums\PaymentStatus;
 use Asciisd\CashierCore\Enums\TransactionType;
 use Asciisd\CashierCore\Models\Transaction;
+use Asciisd\CashierCore\Tests\Fixtures\OwnerScopedTransaction;
 use Illuminate\Support\Facades\URL;
 
 beforeEach(function () {
@@ -119,4 +120,13 @@ it('offers a manual submit button when javascript is unavailable', function () {
     xoalaTransaction();
 
     $this->get(xoalaBridgeUrl())->assertSee('<noscript>', false);
+});
+
+it('finds the deposit through a host owner scope', function () {
+    config()->set('cashier-core.models.transaction', OwnerScopedTransaction::class);
+    xoalaTransaction();
+
+    $this->get(xoalaBridgeUrl())
+        ->assertOk()
+        ->assertSee('name="merchantTransactionId" value="DEP-1"', false);
 });
