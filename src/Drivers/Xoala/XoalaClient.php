@@ -38,6 +38,10 @@ final class XoalaClient
      * @param  string|null  $username  sent as `merchant.username` when the
      *                                 account requires it; see the spec's
      *                                 "Assumptions to confirm"
+     * @param  string|null  $partnerId  sent as `authentication.partnerId`;
+     *                                  a partner-boarded account is refused
+     *                                  a token without it ("Invalid partner
+     *                                  ID", code 30055)
      */
     public function __construct(
         private readonly string $baseUrl,
@@ -45,6 +49,7 @@ final class XoalaClient
         private readonly string $secureKey,
         private readonly string $cacheKey,
         private readonly ?string $username = null,
+        private readonly ?string $partnerId = null,
     ) {}
 
     /**
@@ -153,6 +158,7 @@ final class XoalaClient
                 ->asForm()
                 ->post($this->baseUrl.'/transactionServices/REST/v1/authToken', array_filter([
                     'authentication.memberId' => $this->memberId,
+                    'authentication.partnerId' => $this->partnerId,
                     'authentication.sKey' => $this->secureKey,
                     'merchant.username' => $this->username,
                 ], fn ($value) => $value !== null && $value !== ''));

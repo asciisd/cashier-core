@@ -151,6 +151,12 @@ return [
     |     // entirely when unset, so leaving this blank is safe to try first.
     |     // Plays no part in any checksum.
     |     'username' => env('XOALA_USERNAME'),
+    |     // Sent as `authentication.partnerId` when generating that token. An
+    |     // account boarded through a partner is refused a token without it
+    |     // ("Invalid partner ID OR partner ID is misconfigured", code 30055),
+    |     // so every sync fails. The "Partner ID" on the integration sheet —
+    |     // not the terminal id. Left off the request when unset.
+    |     'partner_id' => env('XOALA_PARTNER_ID'),
     |     // Optional. Required on some account shapes ("Conditional" in the
     |     // spec); sent only when set.
     |     'terminal_id' => env('XOALA_TERMINAL_ID'),

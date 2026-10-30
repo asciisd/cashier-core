@@ -226,6 +226,30 @@ it('retrieves a transaction through the inquiry endpoint', function () {
         ->and($result?->transactionId)->toBe('DEP-1');
 });
 
+it('sends the partner id when generating the auth token', function () {
+    Http::fake([
+        '*/authToken' => Http::response(['AuthToken' => 'jwt-token']),
+        '*/inquiry' => Http::response(['status' => 'capturesuccess', 'transactionStatus' => 'Y']),
+    ]);
+
+    xoalaProvider(['partner_id' => '478'])->retrieve('DEP-1');
+
+    Http::assertSent(fn ($request) => str_ends_with($request->url(), '/authToken')
+        && $request['authentication.partnerId'] === '478');
+});
+
+it('leaves the partner id off the auth token request when unset', function () {
+    Http::fake([
+        '*/authToken' => Http::response(['AuthToken' => 'jwt-token']),
+        '*/inquiry' => Http::response(['status' => 'capturesuccess', 'transactionStatus' => 'Y']),
+    ]);
+
+    xoalaProvider()->retrieve('DEP-1');
+
+    Http::assertSent(fn ($request) => str_ends_with($request->url(), '/authToken')
+        && ! array_key_exists('authentication.partnerId', $request->data()));
+});
+
 it('returns null from retrieve when the lookup fails', function () {
     Http::fake(['*' => Http::response('down', 502)]);
 

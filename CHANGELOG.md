@@ -1,3 +1,7 @@
+## 3.3.1
+
+- Xoala: new optional `partner_id` connection setting, sent as `authentication.partnerId` when generating the REST auth token. An account boarded through a partner is refused a token without it ("Invalid partner ID OR partner ID is misconfigured", code 30055), so every `retrieve()` / sync failed and the deposit was logged as not found at the provider. Left off the request when unset.
+
 ## 3.3.0
 
 - Xoala implements `ResolvesReturnOutcome`. Xoala returns the customer to `merchantRedirectUrl` with a form POST carrying the short status under `status` and the callback checksum; pass the POST body to `returnOutcome()`. `Y` is `Succeeded`, `N` and `C` are `Failed`, anything else is `Unknown`, and so is any body whose checksum the connection's secure key did not produce.
