@@ -22,7 +22,8 @@ interface ProvidesBillingDetails
 {
     /**
      * Billing details keyed by canonical name. Any subset of:
-     * `first_name`, `last_name`, `email`, `phone`, `country` (ISO-2),
+     * `first_name`, `last_name`, `email`, `phone`, `phone_country_code`
+     * (the calling code `phone` starts with, digits only), `country` (ISO-2),
      * `currency`, `date_of_birth` (Y-m-d), `gender` (Male|Female),
      * `street`, `city`, `region`, `zip_code`.
      *

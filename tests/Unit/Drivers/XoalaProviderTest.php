@@ -311,3 +311,129 @@ it('treats an unsigned or tampered redirect-back post as unknown', function () {
 
     expect($provider->returnOutcome($tampered))->toBe(ReturnOutcome::Unknown);
 });
+
+function xoalaBillingCustomer(array $details, string $name = 'John Doe'): Asciisd\CashierCore\Contracts\CustomerContract
+{
+    return new class($details, $name) implements Asciisd\CashierCore\Contracts\CustomerContract, Asciisd\CashierCore\Contracts\ProvidesBillingDetails
+    {
+        public function __construct(private array $details, private string $name) {}
+
+        public function cashierId(): int|string
+        {
+            return 42;
+        }
+
+        public function cashierEmail(): string
+        {
+            return 'contract@example.com';
+        }
+
+        public function cashierName(): string
+        {
+            return $this->name;
+        }
+
+        public function cashierLocale(): string
+        {
+            return 'en';
+        }
+
+        public function cashierBillingDetails(): array
+        {
+            return $this->details;
+        }
+    };
+}
+
+function xoalaPendingTransaction(): Transaction
+{
+    return new Transaction([
+        'provider' => 'xoala',
+        'provider_transaction_id' => 'DEP-1',
+        'amount' => 50.0,
+        'currency' => 'USD',
+    ]);
+}
+
+it('prefills the hosted page from the customer’s billing details', function () {
+    $customer = xoalaBillingCustomer([
+        'first_name' => 'Amr',
+        'last_name' => 'Emad Eldin',
+        'email' => 'amr@example.com',
+        'phone' => '+201011441444',
+        'phone_country_code' => '20',
+        'country' => 'eg',
+        'date_of_birth' => '1986-06-18',
+        'street' => '2, Beta Gardens , October #4.',
+        'city' => '6th of October',
+        'region' => 'Giza',
+        'zip_code' => '12 566',
+    ]);
+
+    $fields = xoalaProvider()->checkoutForm(xoalaPendingTransaction(), $customer, '203.0.113.9')['fields'];
+
+    expect($fields)->toMatchArray([
+        'firstName' => 'Amr',
+        'lastName' => 'Emad Eldin',
+        'email' => 'amr@example.com',
+        'telnocc' => '20',
+        'phone' => '1011441444',
+        'country' => 'EG',
+        'dateOfBirth' => '19860618',
+        'street' => '2, Beta Gardens, October 4',
+        'city' => '6th of October',
+        'state' => 'Giza',
+        'postcode' => '12566',
+        'ip' => '203.0.113.9',
+    ]);
+});
+
+it('drops a value Xoala’s pattern would refuse rather than sending it', function () {
+    $customer = xoalaBillingCustomer([
+        'first_name' => 'عمرو',
+        'last_name' => 'Doe',
+        'email' => 'not-an-email',
+        'country' => 'EGY',
+        'street' => 'شارع النيل',
+        'zip_code' => '1',
+        'date_of_birth' => 'unknown',
+    ]);
+
+    $fields = xoalaProvider()->checkoutForm(xoalaPendingTransaction(), $customer, '2001:db8::1')['fields'];
+
+    expect($fields)->not->toHaveKeys(['firstName', 'email', 'country', 'street', 'postcode', 'dateOfBirth', 'ip'])
+        ->and($fields['lastName'])->toBe('Doe');
+});
+
+it('sends the full number alone when no country code is known', function () {
+    $fields = xoalaProvider()->checkoutForm(
+        xoalaPendingTransaction(),
+        xoalaBillingCustomer(['phone' => '+966 50 423 1856']),
+    )['fields'];
+
+    expect($fields['phone'])->toBe('+966504231856')
+        ->and($fields)->not->toHaveKey('telnocc');
+});
+
+it('falls back to the contract name and email for a customer without billing details', function () {
+    $customer = Mockery::mock(Asciisd\CashierCore\Contracts\CustomerContract::class);
+    $customer->shouldReceive('cashierName')->andReturn('Jane Q Public');
+    $customer->shouldReceive('cashierEmail')->andReturn('jane@example.com');
+
+    $fields = xoalaProvider()->checkoutForm(xoalaPendingTransaction(), $customer)['fields'];
+
+    expect($fields)->toMatchArray([
+        'firstName' => 'Jane',
+        'lastName' => 'Q Public',
+        'email' => 'jane@example.com',
+    ]);
+});
+
+it('sends no customer details when the connection turns them off', function () {
+    $customer = xoalaBillingCustomer(['phone' => '+96550209185', 'country' => 'KW']);
+
+    $fields = xoalaProvider(['send_customer_details' => false])
+        ->checkoutForm(xoalaPendingTransaction(), $customer, '203.0.113.9')['fields'];
+
+    expect($fields)->not->toHaveKeys(['phone', 'country', 'firstName', 'ip']);
+});
