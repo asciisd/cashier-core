@@ -267,6 +267,16 @@ class MyfatoorahAdapter implements PaymentAdapterInterface
             // only comparable when base == display.
             'myfatoorah_receivable_amount' => $amount['ReceivableAmount'] ?? null,
             'myfatoorah_service_charge' => $amount['ServiceCharge'] ?? null,
+            // The fee MyFatoorah took, for a reported-fee payment method to
+            // settle against. ServiceCharge is in the account's BASE currency
+            // (as ReceivableAmount is), so the currency travels with it and
+            // the engine converts or refuses — it never assumes.
+            'settlement_reported_fee' => is_numeric($amount['ServiceCharge'] ?? null)
+                ? (float) $amount['ServiceCharge']
+                : null,
+            'settlement_reported_fee_currency' => is_numeric($amount['ServiceCharge'] ?? null)
+                ? (($amount['BaseCurrency'] ?? '') !== '' ? strtoupper((string) $amount['BaseCurrency']) : null)
+                : null,
         ], fn ($value) => $value !== null);
     }
 

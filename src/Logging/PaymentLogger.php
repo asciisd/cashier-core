@@ -594,6 +594,57 @@ class PaymentLogger
     }
 
     /**
+     * A reported-fee deposit settled below its estimate; the difference was
+     * credited on top of the deposit.
+     */
+    public static function depositCreditedAtReportedFee(
+        string $provider,
+        int $transactionId,
+        float $estimatedFee,
+        float $reportedFee,
+        float $creditedAmount,
+    ): void {
+        self::channel()->info('Deposit credited at the PSP reported fee', [
+            'provider' => $provider,
+            'transaction_id' => $transactionId,
+            'estimated_fee' => $estimatedFee,
+            'reported_fee' => $reportedFee,
+            'credited_amount' => $creditedAmount,
+        ]);
+    }
+
+    /**
+     * The PSP took more than the estimate the customer was charged; the
+     * deposit was credited as quoted and the overage is ours.
+     */
+    public static function reportedFeeAboveEstimate(
+        string $provider,
+        int $transactionId,
+        float $estimatedFee,
+        float $reportedFee,
+    ): void {
+        self::channel()->warning('PSP reported fee exceeds the charged estimate', [
+            'provider' => $provider,
+            'transaction_id' => $transactionId,
+            'estimated_fee' => $estimatedFee,
+            'reported_fee' => $reportedFee,
+        ]);
+    }
+
+    /**
+     * A reported-fee deposit settled without a usable fee figure, so the
+     * estimate stands.
+     */
+    public static function reportedFeeUnavailable(string $provider, int $transactionId, float $estimatedFee): void
+    {
+        self::channel()->warning('PSP reported no usable fee; the estimate stands', [
+            'provider' => $provider,
+            'transaction_id' => $transactionId,
+            'estimated_fee' => $estimatedFee,
+        ]);
+    }
+
+    /**
      * What the PSP reports settling to us diverges from what the configured
      * fees predicted — the alarm for a Nova fee drifting off the real contract.
      */

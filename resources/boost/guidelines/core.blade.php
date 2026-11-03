@@ -101,6 +101,12 @@ if ($result->requiresAction()) {
 - Fees resolve through `FeeCalculator` **before** charging; the PSP is handed the grossed-up amount.
   The transaction stores the customer's deposit in `amount` plus an immutable snapshot
   (`requested_amount`, `charged_amount`, `psp_fee_amount`, `markup_amount`, `settlement_mode`).
+- A fee configuration that also implements `UsesReportedFee` and returns `FeeSource::Reported`
+  charges the configured fee as a **ceiling**: on success the webhook pipeline credits the part
+  of the estimate the PSP did not take on top of the deposit (`amount` only ever grows), from the
+  driver's `settlement_reported_fee` + `settlement_reported_fee_currency` metadata. A fee above
+  the estimate is absorbed; a missing figure keeps the estimate. Refused with `Added`. Never
+  credit a reported fee anywhere but `WebhookProcessor`.
 - Drivers needing to shape their own payload (routing hints, fixed currency, billing shape)
   implement `PreparesChargeData` — **the orchestrator carries no per-provider branches**. Never add one.
 - The currency always comes from `cashier-core.currency.default`; callers cannot pick one. A driver
@@ -200,6 +206,7 @@ $ledger->assertMoved('credit', fn ($m) => $m['amount'] === 100.0);
 - `PaymentStatus` — Pending, Processing, Succeeded, Failed, Canceled, **OnHold**, RequiresAction, RequiresCapture, RequiresConfirmation, RequiresPaymentMethod. **There is no `Refunded` case** — refund/void callbacks map to `Canceled`.
 - `TransactionType` — Deposit, Withdrawal, Refund, Bonus, TransferFrom, TransferTo.
 - `SettlementMode` — Added, Deducted, Invoiced.
+- `FeeSource` — Configured, Reported (independent of the settlement mode).
 - `RefundStatus`, `PaymentMethodType`, `PaymentMethodBrand`.
 
 ### Refunds (2.1)

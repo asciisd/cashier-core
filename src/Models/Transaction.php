@@ -6,6 +6,7 @@ namespace Asciisd\CashierCore\Models;
 
 use Asciisd\CashierCore\Casts\EncryptedArray;
 use Asciisd\CashierCore\Connections\Connections;
+use Asciisd\CashierCore\Enums\FeeSource;
 use Asciisd\CashierCore\Enums\PaymentStatus;
 use Asciisd\CashierCore\Enums\PayoutState;
 use Asciisd\CashierCore\Enums\SettlementMode;
@@ -41,6 +42,7 @@ class Transaction extends Model
         'fees', 'vendor_fees', 'fixed_vendor_fees',
         'charged_amount', 'requested_amount', 'settled_amount',
         'psp_fee_amount', 'markup_amount', 'settlement_mode',
+        'fee_source', 'estimated_psp_fee_amount',
         'description', 'metadata', 'provider_payload',
         'withdrawal_method', 'withdrawal_details', 'withdrawal_reason',
         'payment_method_type', 'payment_method_brand', 'payment_method_last_four', 'payment_method_display_name',
@@ -80,6 +82,7 @@ class Transaction extends Model
             'status' => PaymentStatus::class,
             'type' => TransactionType::class,
             'settlement_mode' => SettlementMode::class,
+            'fee_source' => FeeSource::class,
             'payout_state' => PayoutState::class,
             'is_ftd' => 'boolean',
             'amount' => 'decimal:2',
@@ -93,6 +96,7 @@ class Transaction extends Model
             'settled_amount' => 'decimal:2',
             'psp_fee_amount' => 'decimal:2',
             'markup_amount' => 'decimal:2',
+            'estimated_psp_fee_amount' => 'decimal:2',
             'metadata' => 'array',
             'provider_payload' => $this->encryptedCast('encrypt_provider_payload'),
             'withdrawal_details' => $this->encryptedCast('encrypt_withdrawal_details'),

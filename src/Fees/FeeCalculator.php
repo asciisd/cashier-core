@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Asciisd\CashierCore\Fees;
 
 use Asciisd\CashierCore\Contracts\FeeConfigurationContract;
+use Asciisd\CashierCore\Contracts\UsesReportedFee;
+use Asciisd\CashierCore\Enums\FeeSource;
 use Asciisd\CashierCore\Enums\SettlementMode;
 use InvalidArgumentException;
 
@@ -29,6 +31,7 @@ final class FeeCalculator
             );
         }
 
+        $feeSource = $this->feeSourceFor($method, $mode);
         $markup = $this->markupFor($method, $amount);
         $requested = $this->requestedAmount($mode, $amount, $markup, $rate, $fixed);
         $pspFee = $this->round($requested * $rate + $fixed);
@@ -44,7 +47,25 @@ final class FeeCalculator
                 ? $this->round($requested + $pspFee)
                 : $requested,
             settlementMode: $mode,
+            feeSource: $feeSource,
         );
+    }
+
+    /**
+     * A reported fee is refused in `added`: there the PSP charges the customer
+     * its own fee at checkout, so we never hold an estimate to settle against.
+     */
+    private function feeSourceFor(FeeConfigurationContract $method, SettlementMode $mode): FeeSource
+    {
+        $source = $method instanceof UsesReportedFee ? $method->feeSource() : FeeSource::Configured;
+
+        if ($source === FeeSource::Reported && $mode->pspAddsAtCheckout()) {
+            throw new InvalidArgumentException(
+                "Payment method {$method->feeConfigurationId()} uses a reported fee, which the added settlement mode cannot settle against.",
+            );
+        }
+
+        return $source;
     }
 
     /**

@@ -587,6 +587,10 @@ class PaymentService
                 'psp_fee_amount' => $breakdown->pspFee,
                 'markup_amount' => $breakdown->markup,
                 'settlement_mode' => $breakdown->settlementMode,
+                'fee_source' => $breakdown->feeSource,
+                // Kept apart from `psp_fee_amount`, which the success webhook
+                // rewrites to the fee the PSP actually took.
+                'estimated_psp_fee_amount' => $breakdown->feeIsEstimate() ? $breakdown->pspFee : null,
             ];
         }
 

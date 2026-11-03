@@ -7,6 +7,7 @@ namespace Asciisd\CashierCore\Services\Webhooks;
 use Asciisd\CashierCore\Cashier;
 use Asciisd\CashierCore\Contracts\FundsLedger;
 use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
+use Asciisd\CashierCore\Enums\FeeSource;
 use Asciisd\CashierCore\Enums\PaymentStatus;
 use Asciisd\CashierCore\Enums\TransactionType;
 use Asciisd\CashierCore\Events\DepositFailed;
@@ -186,7 +187,14 @@ class WebhookProcessor
             // Reconcile before the status lands, so the credit below reads an
             // `amount` that already reflects what was actually paid.
             if ($status === PaymentStatus::Succeeded) {
-                $updateData = array_merge($updateData, $this->settlementAttributes($driver, $locked, $update));
+                $settlement = $this->settlementAttributes($driver, $locked, $update);
+                $updateData = array_merge($updateData, $settlement);
+
+                // Never composed with an off-invoice reconciliation: that has
+                // already rescaled `amount` and the whole fee snapshot.
+                if (! array_key_exists('amount', $settlement)) {
+                    $updateData = array_merge($updateData, $this->reportedFeeAttributes($driver, $locked, $update));
+                }
             }
 
             $locked->update($updateData);
@@ -460,6 +468,96 @@ class WebhookProcessor
             'amount' => $settled->amount,
             'settled_amount' => $settled->amount,
         ] + $this->scaledFeeSnapshot($transaction, $settled->ratio);
+    }
+
+    /**
+     * Settle a reported-fee deposit against the fee the PSP actually took.
+     *
+     * The customer was charged the configured fee, which is the ceiling. Any
+     * part of it the PSP did not take is credited on top of the deposit, so
+     * `amount` only ever grows here. A fee above the estimate is ours to
+     * absorb: the deposit is credited as quoted and the overage is recorded.
+     * A missing or unusable figure keeps the estimate — never read as zero.
+     *
+     * @return array<string, mixed>
+     */
+    private function reportedFeeAttributes(
+        string $driver,
+        Transaction $transaction,
+        TransactionWebhookUpdate $update,
+    ): array {
+        if ($transaction->type !== TransactionType::Deposit || $transaction->fee_source !== FeeSource::Reported) {
+            return [];
+        }
+
+        $estimate = $transaction->estimated_psp_fee_amount ?? $transaction->psp_fee_amount;
+
+        if ($estimate === null || $transaction->requested_amount === null) {
+            return [];
+        }
+
+        $estimate = (float) $estimate;
+        $reported = $this->reportedFeeInAccountCurrency($transaction, $update->metadata ?? []);
+
+        if ($reported === null) {
+            PaymentLogger::reportedFeeUnavailable($driver, $transaction->id, $estimate);
+
+            return [];
+        }
+
+        $reported = round($reported, 2);
+
+        if ($reported > $estimate) {
+            PaymentLogger::reportedFeeAboveEstimate($driver, $transaction->id, $estimate, $reported);
+
+            return ['psp_fee_amount' => $reported];
+        }
+
+        $amount = round((float) $transaction->amount + ($estimate - $reported), 2);
+
+        PaymentLogger::depositCreditedAtReportedFee($driver, $transaction->id, $estimate, $reported, $amount);
+
+        return [
+            'amount' => $amount,
+            'psp_fee_amount' => $reported,
+        ];
+    }
+
+    /**
+     * The driver's `settlement_reported_fee`, in the account currency.
+     *
+     * The currency must be stated. A fee in the charge currency is converted
+     * by the charge leg's own ratio (`requested_amount` is what was converted
+     * into `charge_amount`), so it carries the rate the customer was charged
+     * at rather than today's. Any other currency is unusable.
+     *
+     * @param  array<string, mixed>  $metadata
+     */
+    private function reportedFeeInAccountCurrency(Transaction $transaction, array $metadata): ?float
+    {
+        $fee = $metadata['settlement_reported_fee'] ?? null;
+
+        if (! is_numeric($fee) || (float) $fee < 0) {
+            return null;
+        }
+
+        $currency = strtoupper((string) ($metadata['settlement_reported_fee_currency'] ?? ''));
+
+        if ($currency === '') {
+            return null;
+        }
+
+        if ($currency === strtoupper((string) $transaction->currency)) {
+            return (float) $fee;
+        }
+
+        if ($transaction->charge_currency !== null
+            && $currency === strtoupper((string) $transaction->charge_currency)
+            && (float) $transaction->charge_amount > 0) {
+            return (float) $fee * (float) $transaction->requested_amount / (float) $transaction->charge_amount;
+        }
+
+        return null;
     }
 
     /**
