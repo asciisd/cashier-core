@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Asciisd\CashierCore\Fees;
 
+use Asciisd\CashierCore\Enums\FeeSource;
 use Asciisd\CashierCore\Enums\SettlementMode;
 
 /**
@@ -28,7 +29,21 @@ final readonly class FeeBreakdown
         /** What the customer is actually debited. */
         public float $chargedAmount,
         public SettlementMode $settlementMode,
+        /**
+         * Reported: `pspFee` is the most this deposit can cost, settled
+         * against the PSP's own figure when it succeeds.
+         */
+        public FeeSource $feeSource = FeeSource::Configured,
     ) {}
+
+    /**
+     * Whether the fee shown at checkout is a maximum rather than the final
+     * figure.
+     */
+    public function feeIsEstimate(): bool
+    {
+        return $this->feeSource === FeeSource::Reported;
+    }
 
     /**
      * Everything the customer pays beyond their deposit.
@@ -54,6 +69,8 @@ final readonly class FeeBreakdown
             'requested_amount' => $this->requestedAmount,
             'charged_amount' => $this->chargedAmount,
             'settlement_mode' => $this->settlementMode->value,
+            'fee_source' => $this->feeSource->value,
+            'fee_is_estimate' => $this->feeIsEstimate(),
         ];
     }
 }

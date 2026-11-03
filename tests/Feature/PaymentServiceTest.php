@@ -8,10 +8,12 @@ use Asciisd\CashierCore\Contracts\FundsLedger;
 use Asciisd\CashierCore\Contracts\PaymentProcessorInterface;
 use Asciisd\CashierCore\Contracts\PreparesChargeData;
 use Asciisd\CashierCore\Contracts\ResolvesFundingAccount;
+use Asciisd\CashierCore\Contracts\UsesReportedFee;
 use Asciisd\CashierCore\DataObjects\PaymentMethodSnapshot;
 use Asciisd\CashierCore\DataObjects\PaymentResult;
 use Asciisd\CashierCore\DataObjects\RefundResult;
 use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
+use Asciisd\CashierCore\Enums\FeeSource;
 use Asciisd\CashierCore\Enums\PaymentStatus;
 use Asciisd\CashierCore\Enums\RefundStatus;
 use Asciisd\CashierCore\Enums\SettlementMode;
@@ -281,6 +283,63 @@ it('grosses the charge up by the configured fees and stores the snapshot', funct
         ->and((float) $transaction->psp_fee_amount)->toBe(6.71)
         ->and((float) $transaction->markup_amount)->toBe(1.0)
         ->and($transaction->settlement_mode)->toBe(SettlementMode::Deducted);
+});
+
+it('snapshots a reported fee as an estimate beside the fee it will be settled against', function () {
+    $config = new class implements FeeConfigurationContract, UsesReportedFee
+    {
+        public function settlementMode(): SettlementMode
+        {
+            return SettlementMode::Deducted;
+        }
+
+        public function feePercentage(): float
+        {
+            return 3.0;
+        }
+
+        public function feeFixed(): float
+        {
+            return 0.0;
+        }
+
+        public function markupPercentage(): float
+        {
+            return 0.0;
+        }
+
+        public function markupFixed(): float
+        {
+            return 0.0;
+        }
+
+        public function feeConfigurationId(): int|string|null
+        {
+            return 'apple-pay';
+        }
+
+        public function feeSource(): FeeSource
+        {
+            return FeeSource::Reported;
+        }
+    };
+
+    app(PaymentService::class)->processPayment(chargeCustomer(), ['amount' => 100], 'recording', $config);
+
+    $transaction = Transaction::query()->sole();
+
+    expect($transaction->fee_source)->toBe(FeeSource::Reported)
+        ->and((float) $transaction->estimated_psp_fee_amount)->toBe(3.09)
+        ->and((float) $transaction->psp_fee_amount)->toBe(3.09);
+});
+
+it('leaves the estimate empty on a configured fee', function () {
+    app(PaymentService::class)->processPayment(chargeCustomer(), ['amount' => 100], 'recording', chargeFeeConfig());
+
+    $transaction = Transaction::query()->sole();
+
+    expect($transaction->fee_source)->toBe(FeeSource::Configured)
+        ->and($transaction->estimated_psp_fee_amount)->toBeNull();
 });
 
 it('lets the provider shape its own charge payload', function () {

@@ -354,6 +354,12 @@ interface FeeConfigurationContract {
     public function markupFixed(): float;
     public function feeConfigurationId(): int|string|null;
 }
+
+// Optional: the configured fee is a ceiling, settled against the PSP's
+// reported `settlement_reported_fee` (+ `_currency`) on success.
+interface UsesReportedFee {
+    public function feeSource(): FeeSource;   // Configured | Reported
+}
 ```
 
 There is no `toProviderFormat()` — outgoing payload construction lives in the provider's `charge()`.
@@ -405,6 +411,7 @@ carries minor units while `RefundResult` and `TransactionWebhookUpdate` carry ma
 | `PaymentStatus` | Pending, Processing, Succeeded, Failed, Canceled, **OnHold**, RequiresAction, RequiresCapture, RequiresConfirmation, RequiresPaymentMethod |
 | `TransactionType` | Deposit, Withdrawal, Refund, Bonus, TransferFrom, TransferTo |
 | `SettlementMode` | Added, Deducted, Invoiced |
+| `FeeSource` | Configured, Reported |
 | `RefundStatus` | Pending, Processing, Succeeded, Failed, Canceled |
 | `PaymentMethodType` / `PaymentMethodBrand` | card/wallet/crypto taxonomy for the method snapshot |
 

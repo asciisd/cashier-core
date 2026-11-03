@@ -104,6 +104,25 @@ describe('mapStatus', function () {
     });
 });
 
+describe('reported fee', function () {
+    it('reports ServiceCharge in the base currency for a reported-fee method', function () {
+        $update = $this->adapter->fromWebhook(myfatoorahWebhook());
+
+        expect($update->metadata['settlement_reported_fee'])->toBe(0.02)
+            ->and($update->metadata['settlement_reported_fee_currency'])->toBe('KWD');
+    });
+
+    it('reports no fee when ServiceCharge is absent', function () {
+        $payload = myfatoorahWebhook();
+        unset($payload['Data']['Amount']['ServiceCharge']);
+
+        $update = $this->adapter->fromWebhook($payload);
+
+        expect($update->metadata)->not->toHaveKey('settlement_reported_fee')
+            ->and($update->metadata)->not->toHaveKey('settlement_reported_fee_currency');
+    });
+});
+
 describe('fromWebhook', function () {
     it('maps a successful payment event', function () {
         $update = $this->adapter->fromWebhook(myfatoorahWebhook());
