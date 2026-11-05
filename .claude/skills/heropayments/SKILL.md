@@ -35,9 +35,9 @@ Five things that will otherwise cost time:
 
 1. **A saved deposit address keeps working forever.** Addresses are static per
    `customerId` — we pass the MT5 login — and a repeat send raises a new payment
-   with the **same `externalOrderId`** and a new `sequence`. We resolve
-   transactions by `externalOrderId` alone and never read `sequence`, so the
-   second deposit lands on the first one's transaction. `quirks.md` entry 1.
+   with the **same `externalOrderId`** and a new `sequence`. Since 3.6.0 the
+   provider implements `IdentifiesRepeatPayments`: such a payment gets its own
+   transaction, `{externalOrderId}#{paymentId}`. `quirks.md` entry 1.
 2. **The field is `paidAmount`, not `actuallyPaid`.** The adapter reads a name
    that appears nowhere in the contract. `quirks.md` entry 2.
 3. **Sign the body exactly as Node's `JSON.stringify` would emit it.** PHP's

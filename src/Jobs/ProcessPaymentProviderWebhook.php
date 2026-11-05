@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Asciisd\CashierCore\Jobs;
 
 use Asciisd\CashierCore\Connections\ConnectionRegistry;
+use Asciisd\CashierCore\Contracts\IdentifiesRepeatPayments;
 use Asciisd\CashierCore\Contracts\ProvidesWebhookTransactionId;
+use Asciisd\CashierCore\Models\Transaction;
 use Asciisd\CashierCore\Services\Webhooks\WebhookProcessor;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
@@ -95,6 +97,10 @@ class ProcessPaymentProviderWebhook implements ShouldBeUnique, ShouldQueue
 
         $update = $providerInstance->parseWebhook($this->payload);
 
-        $processor->process($this->driver, $providerTransactionId, $update);
+        $repeatPaymentId = $providerInstance instanceof IdentifiesRepeatPayments
+            ? fn (Transaction $original): ?string => $providerInstance->repeatPaymentId($this->payload, $original)
+            : null;
+
+        $processor->process($this->driver, $providerTransactionId, $update, $repeatPaymentId);
     }
 }

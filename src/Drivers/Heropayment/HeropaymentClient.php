@@ -134,6 +134,29 @@ class HeropaymentClient
     }
 
     /**
+     * One page of payments created with this API key, newest first.
+     * Filters: limit, offset, status, transactionType, externalOrderId,
+     * customerId, payAddress, dateFrom, dateTo. Null on any non-2xx.
+     *
+     * @param  array<string, scalar>  $query
+     * @return array{count: int, items: list<array<string, mixed>>}|null
+     */
+    public function listPayments(array $query = []): ?array
+    {
+        $query = array_filter($query, fn ($value) => $value !== null && $value !== '');
+        $payload = $this->getSigned('/v2/payments'.($query === [] ? '' : '?'.http_build_query($query)));
+
+        if (! is_array($payload)) {
+            return null;
+        }
+
+        return [
+            'count' => (int) ($payload['count'] ?? 0),
+            'items' => array_values(is_array($payload['items'] ?? null) ? $payload['items'] : []),
+        ];
+    }
+
+    /**
      * Payment status by our external order id.
      *
      * @return array<string, mixed>|null

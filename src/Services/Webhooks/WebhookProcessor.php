@@ -13,6 +13,7 @@ use Asciisd\CashierCore\Enums\TransactionType;
 use Asciisd\CashierCore\Events\DepositFailed;
 use Asciisd\CashierCore\Events\DepositHeldForReview;
 use Asciisd\CashierCore\Events\DepositSucceeded;
+use Asciisd\CashierCore\Events\RepeatPaymentReceived;
 use Asciisd\CashierCore\Events\FeeDriftDetected;
 use Asciisd\CashierCore\Events\FundsCredited;
 use Asciisd\CashierCore\Events\FundsCreditFailed;
@@ -23,6 +24,8 @@ use Asciisd\CashierCore\Models\Transaction;
 use Asciisd\CashierCore\Services\PaymentMethodSnapshotAttributes;
 use Asciisd\CashierCore\Support\PayloadSanitizer;
 use Asciisd\CashierCore\Support\TransferClaim;
+use Closure;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -43,10 +46,36 @@ class WebhookProcessor
     ) {}
 
     /**
-     * Apply a parsed provider webhook to the matching local transaction.
+     * Metadata that describes one payment's settlement or one transaction's
+     * processing, and so must not be carried from an original transaction to
+     * the repeat payment cloned from it.
      */
-    public function process(string $driver, ?string $providerTransactionId, TransactionWebhookUpdate $update): void
-    {
+    private const REPEAT_METADATA_EXCLUDED = [
+        TransferClaim::METADATA_KEY,
+        'hold_reason',
+        'requires_attention',
+        'settlement_expected_payment',
+        'settlement_actually_paid',
+        'settlement_reported_amount',
+        'settlement_reported_fee',
+        'settlement_reported_fee_currency',
+    ];
+
+    /**
+     * Apply a parsed provider webhook to the matching local transaction.
+     *
+     * @param  (Closure(Transaction): ?string)|null  $repeatPaymentId  resolves whether the
+     *                                                                  callback is a repeat payment against the correlated transaction
+     *                                                                  ({@see \Asciisd\CashierCore\Contracts\IdentifiesRepeatPayments})
+     * @param  string  $source  `webhook` or `sync`, for log/event context
+     */
+    public function process(
+        string $driver,
+        ?string $providerTransactionId,
+        TransactionWebhookUpdate $update,
+        ?Closure $repeatPaymentId = null,
+        string $source = 'webhook',
+    ): void {
         if ($providerTransactionId === null || $providerTransactionId === '') {
             PaymentLogger::providerWebhookMissingTransactionId($driver);
 
@@ -72,7 +101,180 @@ class WebhookProcessor
             return;
         }
 
-        $this->applyUpdate($driver, $transaction, $update);
+        $repeatId = $repeatPaymentId !== null ? $repeatPaymentId($transaction) : null;
+
+        if ($repeatId !== null && $repeatId !== '' && $repeatId !== $transaction->provider_transaction_id) {
+            $this->processRepeatPayment($driver, $transaction, $repeatId, $update, $source);
+
+            return;
+        }
+
+        $this->applyUpdate($driver, $transaction, $update, $source);
+    }
+
+    /**
+     * Apply a callback that reports a second payment against an existing
+     * charge to a transaction of its own.
+     *
+     * The repeat transaction is created on its first callback by cloning the
+     * original's invoice — same customer, account, connection and fee terms —
+     * and then settled through {@see applyUpdate()} like any other deposit.
+     * It is measured against the original invoice: the customer paid a
+     * fraction of the invoice the address was opened for, so the deposit is
+     * that fraction of the original deposit, fees and margin included.
+     */
+    private function processRepeatPayment(
+        string $driver,
+        Transaction $original,
+        string $repeatId,
+        TransactionWebhookUpdate $update,
+        string $source,
+    ): void {
+        if ($original->type !== TransactionType::Deposit) {
+            PaymentLogger::repeatPaymentIgnored($driver, $original->id, $repeatId, 'original is not a deposit');
+
+            return;
+        }
+
+        $repeat = $this->findOrCreateRepeat($driver, $original, $repeatId);
+
+        $expected = $original->metadata['settlement_expected_payment'] ?? null;
+        $metadata = $update->metadata ?? [];
+        $forcedHold = null;
+
+        // A converted charge leg is never reconciled (see settlementAttributes),
+        // so a repeat against one could only be credited at the full invoice.
+        $measurable = $original->charge_currency === null
+            && isset($metadata['settlement_actually_paid'])
+            && is_numeric($expected)
+            && (float) $expected > 0;
+
+        if ($measurable) {
+            // The callback states the expectation of this payment alone, which
+            // is whatever arrived. Measured against itself it would fund the
+            // whole original invoice.
+            $metadata['settlement_expected_payment'] = $expected;
+        } else {
+            unset($metadata['settlement_expected_payment'], $metadata['settlement_actually_paid']);
+
+            if ($update->status === PaymentStatus::Succeeded) {
+                $forcedHold = 'repeat payment cannot be measured against the original invoice';
+            }
+        }
+
+        $metadata['repeat_of'] = $original->reference;
+
+        $rebased = new TransactionWebhookUpdate(
+            status: $update->status,
+            processorResponse: $update->processorResponse,
+            paymentMethodSnapshot: $update->paymentMethodSnapshot,
+            metadata: $metadata,
+            errorCode: $update->errorCode,
+            errorMessage: $update->errorMessage,
+            amount: $update->amount,
+            currency: $update->currency,
+            description: $update->description,
+            additionalAttributes: $update->additionalAttributes,
+        );
+
+        $this->applyUpdate($driver, $repeat, $rebased, $source, $forcedHold);
+    }
+
+    /**
+     * The repeat payment's transaction, created on first sight.
+     *
+     * Creation is serialized on the original's row lock, so two callbacks for
+     * the same repeat payment arriving together create one transaction.
+     */
+    private function findOrCreateRepeat(string $driver, Transaction $original, string $repeatId): Transaction
+    {
+        $model = Cashier::transactionModel();
+
+        return DB::transaction(function () use ($model, $driver, $original, $repeatId): Transaction {
+            $locked = $model::query()
+                ->withoutGlobalScopes($model::cashierBypassedScopes())
+                ->whereKey($original->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $existing = $model::query()
+                ->withoutGlobalScopes($model::cashierBypassedScopes())
+                ->where('provider', $driver)
+                ->where('provider_transaction_id', $repeatId)
+                ->first();
+
+            if ($existing) {
+                return $existing;
+            }
+
+            $invoice = $this->originalInvoice($locked);
+
+            /** @var Transaction $repeat */
+            $repeat = $locked->replicate(['reference', 'id']);
+
+            $repeat->forceFill(array_merge($invoice, [
+                'provider_transaction_id' => $repeatId,
+                'status' => PaymentStatus::Pending,
+                'is_ftd' => false,
+                'settled_amount' => null,
+                'provider_payload' => null,
+                'mt5_ticket_number' => null,
+                'executed_at' => null,
+                'processed_at' => null,
+                'failed_at' => null,
+                'error_code' => null,
+                'error_message' => null,
+                'metadata' => array_merge(
+                    Arr::except($locked->metadata ?? [], self::REPEAT_METADATA_EXCLUDED),
+                    ['repeat_of' => $locked->reference],
+                ),
+            ]));
+
+            $repeat->save();
+
+            PaymentLogger::repeatPaymentTransactionCreated($driver, $locked->id, $repeat->id, $repeatId);
+
+            DB::afterCommit(fn () => RepeatPaymentReceived::dispatch($repeat, $locked));
+
+            return $repeat;
+        });
+    }
+
+    /**
+     * The original transaction's invoice as it was charged.
+     *
+     * A settled deposit may have been reconciled to what actually arrived,
+     * which scales the deposit and its fee snapshot by one ratio while
+     * `requested_amount` keeps the invoiced figure. The ratio is recovered
+     * from the charge leg — the only part of the snapshot that is the invoice
+     * itself in every mode but `added`, where the PSP fee sits on top of it —
+     * and divided back out.
+     *
+     * @return array<string, mixed>
+     */
+    private function originalInvoice(Transaction $original): array
+    {
+        if (! $original->hasFeeSnapshot() || (float) $original->requested_amount <= 0.0) {
+            return [];
+        }
+
+        $requested = (float) $original->requested_amount;
+        $charged = (float) $original->charged_amount;
+        $pspFee = (float) $original->psp_fee_amount;
+        $addsAtCheckout = $original->settlement_mode?->pspAddsAtCheckout() ?? false;
+
+        $ratio = ($addsAtCheckout ? $charged - $pspFee : $charged) / $requested;
+
+        if ($ratio <= 0.0 || abs($ratio - 1.0) < 1e-6) {
+            return [];
+        }
+
+        return [
+            'amount' => round((float) $original->amount / $ratio, 2),
+            'charged_amount' => round($charged / $ratio, 2),
+            'psp_fee_amount' => round($pspFee / $ratio, 2),
+            'markup_amount' => round((float) $original->markup_amount / $ratio, 2),
+        ];
     }
 
     /**
@@ -90,11 +292,12 @@ class WebhookProcessor
         Transaction $transaction,
         TransactionWebhookUpdate $update,
         string $source = 'webhook',
+        ?string $forceHoldReason = null,
     ): bool {
         $model = Cashier::transactionModel();
 
         /** @var array{0: Transaction, 1: PaymentStatus, 2: PaymentStatus}|null $applied */
-        $applied = DB::transaction(function () use ($model, $driver, $transaction, $update, $source): ?array {
+        $applied = DB::transaction(function () use ($model, $driver, $transaction, $update, $source, $forceHoldReason): ?array {
             // Re-read under a row lock: the caller's instance may be stale by
             // the time this runs, and two concurrent deliveries (or a webhook
             // racing an admin sync) must not both pass the guards below. The
@@ -143,7 +346,7 @@ class WebhookProcessor
             // reconcile instead (their settlement metadata says what actually
             // arrived), so they are exempt from the hold.
             if ($status === PaymentStatus::Succeeded && $locked->type === TransactionType::Deposit) {
-                $holdReason = $this->deviationBeyondTolerance($locked, $update);
+                $holdReason = $forceHoldReason ?? $this->deviationBeyondTolerance($locked, $update);
 
                 if ($holdReason !== null) {
                     $status = PaymentStatus::OnHold;

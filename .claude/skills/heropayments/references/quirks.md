@@ -19,16 +19,21 @@ without creating an order, Heropayments raises a *new payment* carrying the
 to the original payment's `callbackUrl`. "Automated mistaken deposits
 processing" does the same with `sequence: original` and a changed `payCurrency`.
 
-**Here:** `HeropaymentProvider.php:200-205` resolves our transaction from
-`externalOrderId` alone, and `sequence` is read nowhere under
-`src/Drivers/Heropayment/`. A second deposit therefore arrives addressed to the
-first deposit's transaction. We pass the MT5 trading account login as
-`customerId` (`HeropaymentProvider.php:109-114`), so every account holds one
-permanent deposit address for as long as it exists.
+**Here (fixed in 3.6.0):** before 3.6.0 the transaction was resolved from
+`externalOrderId` alone and `sequence` was read nowhere, so a second deposit was
+applied to the first deposit's transaction and dropped as a duplicate.
+`HeropaymentProvider::repeatPaymentId()` now marks a callback as a repeat when
+its `sequence` is not `original` or its payment `id` differs from the one the
+original recorded, and `WebhookProcessor` opens a transaction for it under
+`{externalOrderId}#{paymentId}`. We pass the MT5 trading account login as
+`customerId`, so every account holds one permanent deposit address.
 
-**Unverified:** whether any repeat deposit has actually arrived. Search
-production callback logs for two payloads sharing an `externalOrderId` with
-differing `sequence`.
+**Verified (2026-11-05):** production txn 2525 received a second 398.50 USDT
+payment (`sequence` `0249afb9bb8d9936ee9a712947e14705`, payment
+`61d246d0-f70d-45ac-ba46-f2074537b8c3`). Its `payAmount` equals its own
+`paidAmount`, and `invoice.priceAmount` is the original's — so a repeat must be
+measured against the original's `payAmount`, never its own.
+`cashier:heropayment-repeats` recovers repeats the pipeline missed.
 
 ## 2. `actuallyPaid` is not a Heropayments field
 
