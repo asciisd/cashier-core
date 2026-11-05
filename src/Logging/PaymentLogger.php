@@ -567,6 +567,26 @@ class PaymentLogger
      * A client-controlled payment (crypto) landed off its invoice, so the
      * deposit was reconciled to what actually arrived before crediting.
      */
+    public static function repeatPaymentTransactionCreated(string $provider, int $originalId, int $transactionId, string $providerTransactionId): void
+    {
+        self::channel()->warning('Repeat payment against an existing charge opened as a new transaction', [
+            'provider' => $provider,
+            'original_transaction_id' => $originalId,
+            'transaction_id' => $transactionId,
+            'provider_transaction_id' => $providerTransactionId,
+        ]);
+    }
+
+    public static function repeatPaymentIgnored(string $provider, int $originalId, string $providerTransactionId, string $reason): void
+    {
+        self::channel()->error('Repeat payment against an existing charge could not be recorded', [
+            'provider' => $provider,
+            'original_transaction_id' => $originalId,
+            'provider_transaction_id' => $providerTransactionId,
+            'reason' => $reason,
+        ]);
+    }
+
     public static function depositHeldForReview(string $provider, int $transactionId, string $reason): void
     {
         self::channel()->warning('Deposit success held for review instead of credited', [

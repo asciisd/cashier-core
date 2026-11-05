@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Asciisd\CashierCore\Drivers\Heropayment;
 
+use Asciisd\CashierCore\Contracts\IdentifiesRepeatPayments;
 use Asciisd\CashierCore\Contracts\PaymentProcessorInterface;
 use Asciisd\CashierCore\Contracts\ProvidesWebhookTransactionId;
 use Asciisd\CashierCore\Contracts\SendsPayouts;
@@ -15,14 +16,22 @@ use Asciisd\CashierCore\DataObjects\RefundResult;
 use Asciisd\CashierCore\DataObjects\TransactionWebhookUpdate;
 use Asciisd\CashierCore\Exceptions\PaymentProcessingException;
 use Asciisd\CashierCore\Logging\PaymentLogger;
+use Asciisd\CashierCore\Models\Transaction;
 use Asciisd\CashierCore\Support\WebhookRoute;
 use Illuminate\Http\Client\HttpClientException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 
-class HeropaymentProvider implements PaymentProcessorInterface, ProvidesWebhookTransactionId, SendsPayouts
+class HeropaymentProvider implements IdentifiesRepeatPayments, PaymentProcessorInterface, ProvidesWebhookTransactionId, SendsPayouts
 {
+    /**
+     * Separates the order id from the payment id in a repeat payment's
+     * provider transaction id. Neither half can contain it: order ids are
+     * `DEP-` ULIDs, payment ids are UUIDs.
+     */
+    public const REPEAT_SEPARATOR = '#';
+
     private HeropaymentClient $client;
 
     private HeropaymentAdapter $adapter;
@@ -162,7 +171,7 @@ class HeropaymentProvider implements PaymentProcessorInterface, ProvidesWebhookT
 
     public function retrieve(string $transactionId): ?PaymentResult
     {
-        $payload = $this->client->getPaymentByOrderId($transactionId);
+        $payload = $this->lookupPayment($transactionId);
 
         if ($payload === null) {
             return null;
@@ -173,9 +182,27 @@ class HeropaymentProvider implements PaymentProcessorInterface, ProvidesWebhookT
 
     public function getPaymentStatus(string $transactionId): string
     {
-        $payload = $this->client->getPaymentByOrderId($transactionId);
+        $payload = $this->lookupPayment($transactionId);
 
         return (string) ($payload['status'] ?? 'unknown');
+    }
+
+    /**
+     * A repeat payment shares its order id with the original, so looking it up
+     * by order id would return the original. It is looked up by its own
+     * payment id instead.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function lookupPayment(string $transactionId): ?array
+    {
+        if (str_contains($transactionId, self::REPEAT_SEPARATOR)) {
+            [, $paymentId] = explode(self::REPEAT_SEPARATOR, $transactionId, 2);
+
+            return $paymentId === '' ? null : $this->client->getPayment($paymentId);
+        }
+
+        return $this->client->getPaymentByOrderId($transactionId);
     }
 
     public function validatePaymentData(array $data): array
@@ -208,6 +235,39 @@ class HeropaymentProvider implements PaymentProcessorInterface, ProvidesWebhookT
         $orderId = $payload['externalOrderId'] ?? $payload['orderID'] ?? $payload['orderId'] ?? null;
 
         return $orderId !== null ? (string) $orderId : null;
+    }
+
+    /**
+     * A deposit address is static per customer, so a customer can pay to it
+     * again without opening a new deposit. Heropayment records that as a new
+     * payment (its own `id`) and reports it under the last order's
+     * `externalOrderId`, marking it with a `sequence` other than `original`.
+     *
+     * The callback is a repeat payment when its `sequence` says so, or when
+     * its payment id differs from the one the original transaction already
+     * recorded. It is tracked as `{externalOrderId}#{paymentId}`.
+     */
+    public function repeatPaymentId(array $payload, Transaction $original): ?string
+    {
+        $paymentId = isset($payload['id']) && is_scalar($payload['id']) ? (string) $payload['id'] : '';
+
+        if ($paymentId === '') {
+            return null;
+        }
+
+        $sequence = isset($payload['sequence']) && is_scalar($payload['sequence']) ? (string) $payload['sequence'] : '';
+        $isSubsequent = $sequence !== '' && strtolower($sequence) !== 'original';
+
+        $knownPaymentId = (string) ($original->metadata['heropayment_payment_id'] ?? '');
+        $isAnotherPayment = $knownPaymentId !== '' && $knownPaymentId !== $paymentId;
+
+        if (! $isSubsequent && ! $isAnotherPayment) {
+            return null;
+        }
+
+        $orderId = $this->extractWebhookTransactionId($payload) ?? (string) $original->provider_transaction_id;
+
+        return $orderId.self::REPEAT_SEPARATOR.$paymentId;
     }
 
     public function getName(): string
