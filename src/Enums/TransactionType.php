@@ -11,6 +11,12 @@ enum TransactionType: string
     case TransferFrom = 'transfer_from';
     case TransferTo = 'transfer_to';
 
+    /**
+     * Commission paid to an introducing broker. It is earned money, not a
+     * promotional credit, so it must never be filed as a Bonus.
+     */
+    case IbPayout = 'ib_payout';
+
     public function label(): string
     {
         return match ($this) {
@@ -20,6 +26,7 @@ enum TransactionType: string
             self::Bonus => 'Bonus',
             self::TransferFrom => 'Transfer From',
             self::TransferTo => 'Transfer To',
+            self::IbPayout => 'IB Payout',
         };
     }
 
@@ -27,7 +34,7 @@ enum TransactionType: string
      * MT5 comment prefix for each transaction type.
      *
      * DEP = Deposit, FTD = First Time Deposit (handled in Transaction model),
-     * WDL = Withdrawal, REF = Refund, BNS = Bonus.
+     * WDL = Withdrawal, REF = Refund, BNS = Bonus, IBP = IB Payout.
      * Transfers use full words for readability in MT5.
      */
     public function mt5Prefix(): string
@@ -39,13 +46,14 @@ enum TransactionType: string
             self::Bonus => 'BNS',
             self::TransferFrom => 'transfer from',
             self::TransferTo => 'transfer to',
+            self::IbPayout => 'IBP',
         };
     }
 
     public function isCredit(): bool
     {
         return match ($this) {
-            self::Deposit, self::Bonus, self::TransferTo => true,
+            self::Deposit, self::Bonus, self::TransferTo, self::IbPayout => true,
             self::Withdrawal, self::Refund, self::TransferFrom => false,
         };
     }

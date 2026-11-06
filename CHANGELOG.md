@@ -1,3 +1,7 @@
+## 3.7.0
+
+- New `TransactionType::IbPayout` (`ib_payout`, label "IB Payout", MT5 prefix `IBP`, a credit). Commission paid to an introducing broker is earned money; hosts were recording it as `Bonus`, which put it among promotional credits in every report. Hosts with an exhaustive `match` on `TransactionType` must add the case.
+
 ## 3.6.0
 
 - Repeat payments get a transaction of their own. A Heropayment deposit address is static per customer, so a customer can pay to it again without opening a deposit; Heropayment records that as a new payment and reports it under the last order's `externalOrderId`. Until now the pipeline matched it to the original transaction and dropped every callback as a duplicate or out-of-order update, so the customer was never credited. Production txn 2525 lost 398.50 USDT this way.
